@@ -2,34 +2,37 @@
 // Revamp Hub - PWA Client
 // ============================================================
 // WebSocket client that renders device cards with live status,
-// pattern selection, and brightness control.
+// pattern selection, brightness slider, and color picker.
+// Uses safe DOM methods throughout (no innerHTML).
 // ============================================================
 
 let ws = null;
 let devices = [];
 let reconnectTimer = null;
+let patternCache = {}; // deviceId -> [patterns]
 
-// Connect to Hub WebSocket
+// ---- WebSocket ----
+
 function connect() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   ws = new WebSocket(proto + '//' + location.host + '/ws');
 
   ws.onopen = () => {
-    document.getElementById('connection-status').textContent = 'Connected';
-    if (reconnectTimer) clearInterval(reconnectTimer);
-    reconnectTimer = null;
+    const el = document.getElementById('connection-status');
+    el.textContent = 'Connected';
+    el.className = 'connected';
+    if (reconnectTimer) { clearInterval(reconnectTimer); reconnectTimer = null; }
   };
 
   ws.onmessage = (e) => {
-    const msg = JSON.parse(e.data);
-    handleMessage(msg);
+    try { handleMessage(JSON.parse(e.data)); } catch (_) {}
   };
 
   ws.onclose = () => {
-    document.getElementById('connection-status').textContent = 'Disconnected - reconnecting...';
-    if (!reconnectTimer) {
-      reconnectTimer = setInterval(connect, 3000);
-    }
+    const el = document.getElementById('connection-status');
+    el.textContent = 'Disconnected \u2013 reconnecting...';
+    el.className = 'disconnected';
+    if (!reconnectTimer) reconnectTimer = setInterval(connect, 3000);
   };
 }
 
@@ -44,7 +47,6 @@ function handleMessage(msg) {
       break;
     case 'device_online':
     case 'device_offline':
-      // Refresh full list
       if (ws && ws.readyState === 1) {
         ws.send(JSON.stringify({ type: 'get_devices' }));
       }
@@ -54,62 +56,52 @@ function handleMessage(msg) {
 
 function updateDevice(id, data) {
   const idx = devices.findIndex(d => d.id === id);
-  if (idx >= 0) {
-    devices[idx] = data;
-    renderDevices();
-  }
+  if (idx >= 0) { devices[idx] = data; renderDevices(); }
 }
 
-// Render all device cards
+// ---- Rendering ----
+
 function renderDevices() {
   const container = document.getElementById('devices');
-  // Clear existing content safely
   while (container.firstChild) container.removeChild(container.firstChild);
 
-  devices.forEach(dev => {
-    container.appendChild(createDeviceCard(dev));
-  });
-
-  // Update "All Devices" pattern grid with patterns from first online device
-  const online = devices.find(d => d.online && d.status);
-  if (online && online.status) {
-    renderAllPatterns(online);
+  if (devices.length === 0) {
+    const p = document.createElement('p');
+    p.style.cssText = 'text-align:center;color:#777;font-size:13px';
+    p.textContent = 'No devices found';
+    container.appendChild(p);
+    return;
   }
+
+  devices.forEach(dev => container.appendChild(createDeviceCard(dev)));
+
+  // Show "All Devices" section if any online
+  const hasOnline = devices.some(d => d.online);
+  document.getElementById('all-section').style.display = hasOnline ? '' : 'none';
+  if (hasOnline) renderAllPatterns();
 }
 
-// Create a device card DOM element
 function createDeviceCard(dev) {
-  const card = document.createElement('div');
-  card.className = 'device-card ' + (dev.online ? 'online' : 'offline');
+  const card = el('div', 'device-card ' + (dev.online ? 'online' : 'offline'));
 
-  // Header
-  const header = document.createElement('div');
-  header.className = 'device-header';
-
-  const nameSpan = document.createElement('span');
-  nameSpan.className = 'device-name';
-  const dot = document.createElement('span');
-  dot.className = 'status-dot ' + (dev.online ? 'on' : 'off');
-  nameSpan.appendChild(dot);
-  nameSpan.appendChild(document.createTextNode(dev.name));
-  header.appendChild(nameSpan);
+  // Header row
+  const header = el('div', 'device-header');
+  const name = el('span', 'device-name');
+  name.appendChild(el('span', 'status-dot ' + (dev.online ? 'on' : 'off')));
+  name.appendChild(document.createTextNode(dev.name));
+  header.appendChild(name);
 
   if (dev.online && dev.status) {
-    const modeSpan = document.createElement('span');
-    modeSpan.style.color = '#00d4ff';
-    modeSpan.style.fontSize = '13px';
-    modeSpan.textContent = dev.status.modeName || dev.status.mode;
-    header.appendChild(modeSpan);
+    const mode = el('span', 'device-mode');
+    mode.textContent = dev.status.modeName || dev.status.mode;
+    header.appendChild(mode);
   }
-
   card.appendChild(header);
 
   if (!dev.online) {
-    const offMsg = document.createElement('p');
-    offMsg.style.color = '#ff4444';
-    offMsg.style.fontSize = '13px';
-    offMsg.textContent = 'Device offline';
-    card.appendChild(offMsg);
+    const msg = el('p', 'offline-msg');
+    msg.textContent = 'Device offline';
+    card.appendChild(msg);
     return card;
   }
 
@@ -117,87 +109,157 @@ function createDeviceCard(dev) {
   if (!s) return card;
 
   // Info grid
-  const info = document.createElement('div');
-  info.className = 'device-info';
-  const infoItems = [
-    ['IP', s.ip],
-    ['Version', 'v' + s.version],
-    ['Heap', s.freeHeap + ' B'],
-    ['WiFi', s.rssi + ' dBm'],
-    ['Uptime', formatUptime(s.uptime)],
-    ['NTP', s.ntpValid ? 'Synced' : 'Pending']
-  ];
-  infoItems.forEach(([label, value]) => {
-    const item = document.createElement('div');
-    item.className = 'info-item';
-    const lbl = document.createElement('span');
-    lbl.className = 'info-label';
-    lbl.textContent = label + ': ';
-    const val = document.createElement('span');
-    val.className = 'info-value';
-    val.textContent = value;
-    item.appendChild(lbl);
-    item.appendChild(val);
-    info.appendChild(item);
-  });
+  const info = el('div', 'device-info');
+  addInfoItem(info, 'IP', s.ip);
+  addInfoItem(info, 'Heap', formatBytes(s.freeHeap));
+  addInfoItem(info, 'WiFi', s.rssi + ' dBm');
+  addInfoItem(info, 'Uptime', formatUptime(s.uptime));
+  addInfoItem(info, 'Version', 'v' + s.version);
+  addInfoItem(info, 'NTP', s.ntpValid ? '\u2713 Synced' : 'Pending');
   card.appendChild(info);
 
-  // Pattern grid (fetch async)
-  const patGrid = document.createElement('div');
-  patGrid.className = 'pattern-grid';
+  // Pattern grid
+  const patLabel = el('div', 'section-label');
+  patLabel.textContent = 'Pattern';
+  card.appendChild(patLabel);
+  const patGrid = el('div', 'pattern-grid');
   patGrid.id = 'patterns-' + dev.id;
   card.appendChild(patGrid);
   fetchPatterns(dev);
 
-  // Brightness control
-  const brRow = document.createElement('div');
-  brRow.className = 'brightness-row';
+  // Brightness slider
+  const brLabel = el('div', 'section-label');
+  brLabel.textContent = 'Brightness';
+  card.appendChild(brLabel);
+  const brSection = el('div', 'brightness-section');
+  const brRow = el('div', 'brightness-row');
 
-  const brDown = document.createElement('button');
-  brDown.className = 'br-btn';
-  brDown.textContent = '-';
+  const brDown = el('button', 'br-btn');
+  brDown.textContent = '\u2212';
   brDown.onclick = () => setBrightness(dev.id, 'down');
 
-  const brVal = document.createElement('span');
-  brVal.className = 'br-val';
-  brVal.textContent = s.brightness;
+  const brSlider = document.createElement('input');
+  brSlider.type = 'range';
+  brSlider.className = 'br-slider';
+  brSlider.min = '1';
+  brSlider.max = '250';
+  brSlider.value = String(s.brightness);
+  let sliderTimeout = null;
+  brSlider.oninput = () => {
+    brVal.textContent = brSlider.value;
+    clearTimeout(sliderTimeout);
+    sliderTimeout = setTimeout(() => {
+      setBrightnessVal(dev.id, parseInt(brSlider.value));
+    }, 150);
+  };
 
-  const brUp = document.createElement('button');
-  brUp.className = 'br-btn';
+  const brVal = el('span', 'br-val');
+  brVal.textContent = String(s.brightness);
+
+  const brUp = el('button', 'br-btn');
   brUp.textContent = '+';
   brUp.onclick = () => setBrightness(dev.id, 'up');
 
   brRow.appendChild(brDown);
+  brRow.appendChild(brSlider);
   brRow.appendChild(brVal);
   brRow.appendChild(brUp);
-  card.appendChild(brRow);
+  brSection.appendChild(brRow);
+  card.appendChild(brSection);
+
+  // Color picker
+  const colorLabel = el('div', 'section-label');
+  colorLabel.textContent = 'Custom Color';
+  card.appendChild(colorLabel);
+  const colorSection = el('div', 'color-section');
+  const colorRow = el('div', 'color-row');
+
+  const colorInput = document.createElement('input');
+  colorInput.type = 'color';
+  colorInput.className = 'color-input';
+  colorInput.value = '#ff6600';
+  let colorTimeout = null;
+  colorInput.oninput = () => {
+    clearTimeout(colorTimeout);
+    colorTimeout = setTimeout(() => {
+      const hex = colorInput.value;
+      const r = parseInt(hex.substr(1, 2), 16);
+      const g = parseInt(hex.substr(3, 2), 16);
+      const b = parseInt(hex.substr(5, 2), 16);
+      sendColor(dev.id, r, g, b);
+    }, 80);
+  };
+
+  const presets = el('div', 'color-presets');
+  const presetColors = [
+    '#ff0000', '#ff6600', '#ffcc00', '#00ff00',
+    '#00ffcc', '#0088ff', '#8800ff', '#ff00aa',
+    '#ffffff', '#ff4400'
+  ];
+  presetColors.forEach(color => {
+    const swatch = document.createElement('button');
+    swatch.className = 'color-preset';
+    swatch.style.background = color;
+    swatch.onclick = () => {
+      colorInput.value = color;
+      const r = parseInt(color.substr(1, 2), 16);
+      const g = parseInt(color.substr(3, 2), 16);
+      const b = parseInt(color.substr(5, 2), 16);
+      sendColor(dev.id, r, g, b);
+    };
+    presets.appendChild(swatch);
+  });
+
+  colorRow.appendChild(colorInput);
+  colorRow.appendChild(presets);
+  colorSection.appendChild(colorRow);
+  card.appendChild(colorSection);
 
   return card;
 }
 
-// Fetch and render patterns for a device
+// ---- Patterns ----
+
 async function fetchPatterns(dev) {
   try {
     const res = await fetch('/api/devices/' + dev.id + '/patterns');
+    if (!res.ok) return;
     const patterns = await res.json();
-    const grid = document.getElementById('patterns-' + dev.id);
-    if (!grid) return;
-
-    while (grid.firstChild) grid.removeChild(grid.firstChild);
-
-    patterns.forEach(pat => {
-      const btn = document.createElement('button');
-      btn.className = 'pat-btn' + (dev.status && dev.status.mode === pat.id ? ' active' : '');
-      btn.textContent = pat.name;
-      btn.onclick = () => setPattern(dev.id, pat.id);
-      grid.appendChild(btn);
-    });
-  } catch {
-    // Device may be slow to respond
-  }
+    patternCache[dev.id] = patterns;
+    renderPatternGrid(dev.id, patterns, dev.status ? dev.status.mode : '');
+  } catch (_) {}
 }
 
-// Set pattern on a device
+function renderPatternGrid(deviceId, patterns, activeMode) {
+  const grid = document.getElementById('patterns-' + deviceId);
+  if (!grid) return;
+  while (grid.firstChild) grid.removeChild(grid.firstChild);
+
+  patterns.forEach(pat => {
+    const btn = el('button', 'pat-btn' + (activeMode === pat.id ? ' active' : ''));
+    btn.textContent = pat.name;
+    btn.onclick = () => setPattern(deviceId, pat.id);
+    grid.appendChild(btn);
+  });
+}
+
+// ---- All Devices ----
+
+function renderAllPatterns() {
+  const grid = document.getElementById('all-patterns');
+  while (grid.firstChild) grid.removeChild(grid.firstChild);
+
+  const common = ['rainbow', 'candle', 'wave', 'sparkle', 'red', 'green', 'blue', 'white', 'off'];
+  common.forEach(id => {
+    const btn = el('button', 'pat-btn');
+    btn.textContent = id.charAt(0).toUpperCase() + id.slice(1);
+    btn.onclick = () => allPattern(id);
+    grid.appendChild(btn);
+  });
+}
+
+// ---- API Calls ----
+
 async function setPattern(deviceId, patternId) {
   try {
     await fetch('/api/devices/' + deviceId + '/pattern', {
@@ -205,12 +267,9 @@ async function setPattern(deviceId, patternId) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: patternId })
     });
-  } catch (e) {
-    console.error('Set pattern failed:', e);
-  }
+  } catch (_) {}
 }
 
-// Set brightness on a device
 async function setBrightness(deviceId, dir) {
   try {
     await fetch('/api/devices/' + deviceId + '/brightness', {
@@ -218,25 +277,24 @@ async function setBrightness(deviceId, dir) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ dir })
     });
-  } catch (e) {
-    console.error('Set brightness failed:', e);
-  }
+  } catch (_) {}
 }
 
-// All-devices controls
-function renderAllPatterns(dev) {
-  const grid = document.getElementById('all-patterns');
-  while (grid.firstChild) grid.removeChild(grid.firstChild);
+async function setBrightnessVal(deviceId, value) {
+  try {
+    await fetch('/api/devices/' + deviceId + '/brightness', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value })
+    });
+  } catch (_) {}
+}
 
-  // Common patterns shared across devices
-  const common = ['rainbow', 'candle', 'wave', 'sparkle', 'red', 'green', 'blue', 'white', 'off'];
-  common.forEach(id => {
-    const btn = document.createElement('button');
-    btn.className = 'pat-btn';
-    btn.textContent = id.charAt(0).toUpperCase() + id.slice(1);
-    btn.onclick = () => allPattern(id);
-    grid.appendChild(btn);
-  });
+async function sendColor(deviceId, r, g, b) {
+  // Send via WebSocket for real-time responsiveness
+  if (ws && ws.readyState === 1) {
+    ws.send(JSON.stringify({ type: 'color_update', device: deviceId, r, g, b }));
+  }
 }
 
 async function allPattern(patternId) {
@@ -246,30 +304,53 @@ async function allPattern(patternId) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: patternId })
     });
-  } catch (e) {
-    console.error('All pattern failed:', e);
-  }
+  } catch (_) {}
 }
 
 async function allBrightness(dir) {
-  const val = dir === 'up' ? 100 : 30; // Placeholder
-  try {
-    await fetch('/api/devices/all/brightness', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ dir })
-    });
-  } catch (e) {
-    console.error('All brightness failed:', e);
+  for (const dev of devices) {
+    if (dev.online) setBrightness(dev.id, dir);
   }
 }
 
+function allBrightnessVal(value) {
+  for (const dev of devices) {
+    if (dev.online) setBrightnessVal(dev.id, parseInt(value));
+  }
+}
+
+// ---- Helpers ----
+
+function el(tag, className) {
+  const e = document.createElement(tag);
+  if (className) e.className = className;
+  return e;
+}
+
+function addInfoItem(parent, label, value) {
+  const item = el('div', 'info-item');
+  const lbl = el('span', 'info-label');
+  lbl.textContent = label;
+  const val = el('span', 'info-value');
+  val.textContent = value;
+  item.appendChild(lbl);
+  item.appendChild(val);
+  parent.appendChild(item);
+}
+
 function formatUptime(secs) {
+  if (!secs && secs !== 0) return '?';
   if (secs > 86400) return Math.floor(secs / 86400) + 'd ' + Math.floor((secs % 86400) / 3600) + 'h';
   if (secs > 3600) return Math.floor(secs / 3600) + 'h ' + Math.floor((secs % 3600) / 60) + 'm';
   if (secs > 60) return Math.floor(secs / 60) + 'm ' + (secs % 60) + 's';
   return secs + 's';
 }
 
-// Start
+function formatBytes(bytes) {
+  if (bytes > 1048576) return (bytes / 1048576).toFixed(1) + ' MB';
+  if (bytes > 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return bytes + ' B';
+}
+
+// ---- Start ----
 connect();

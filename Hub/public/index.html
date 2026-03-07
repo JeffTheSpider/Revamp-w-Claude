@@ -4,101 +4,227 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Revamp Hub</title>
-  <meta name="theme-color" content="#1a1a2e">
+  <meta name="theme-color" content="#0d0d1a">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <link rel="manifest" href="/manifest.json">
   <style>
+    :root {
+      --bg-deep: #0d0d1a;
+      --bg-card: #141428;
+      --bg-elevated: #1a1a36;
+      --accent: #00d4ff;
+      --accent-dim: #0088aa;
+      --green: #00ff88;
+      --red: #ff4455;
+      --yellow: #ffaa00;
+      --text: #e0e0e0;
+      --text-dim: #777;
+      --border: #2a2a4a;
+      --radius: 12px;
+    }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      background: #1a1a2e; color: #e0e0e0;
-      min-height: 100vh; padding: 16px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg-deep); color: var(--text);
+      min-height: 100vh; padding: 12px 12px 80px;
+      -webkit-font-smoothing: antialiased;
     }
+
+    /* Header */
     header {
-      text-align: center; padding: 12px 0;
-      border-bottom: 1px solid #2a2a4a; margin-bottom: 16px;
+      text-align: center; padding: 16px 0 12px;
+      position: relative;
     }
-    header h1 { color: #00d4ff; font-size: 22px; }
-    header p { color: #666; font-size: 12px; }
+    header h1 {
+      color: var(--accent); font-size: 20px; font-weight: 700;
+      letter-spacing: 0.5px;
+    }
+    header h1 span { font-weight: 300; opacity: 0.6; }
+    #connection-status {
+      font-size: 11px; color: var(--text-dim); margin-top: 4px;
+    }
+    #connection-status.connected { color: var(--green); }
+    #connection-status.disconnected { color: var(--red); }
 
-    .devices { display: flex; flex-direction: column; gap: 12px; max-width: 600px; margin: 0 auto; }
-
+    /* Device Cards */
+    .devices {
+      display: flex; flex-direction: column; gap: 12px;
+      max-width: 520px; margin: 12px auto;
+    }
     .device-card {
-      background: #16213e; border-radius: 10px; padding: 16px;
-      border: 1px solid #2a2a4a; transition: border-color 0.3s;
+      background: var(--bg-card); border-radius: var(--radius);
+      padding: 16px; border: 1px solid var(--border);
+      transition: border-color 0.3s, box-shadow 0.3s;
     }
-    .device-card.online { border-color: #00ff88; }
-    .device-card.offline { border-color: #ff4444; opacity: 0.6; }
+    .device-card.online {
+      border-color: rgba(0, 255, 136, 0.3);
+      box-shadow: 0 0 20px rgba(0, 255, 136, 0.05);
+    }
+    .device-card.offline {
+      border-color: rgba(255, 68, 85, 0.3); opacity: 0.5;
+    }
 
+    /* Device Header */
     .device-header {
       display: flex; justify-content: space-between; align-items: center;
-      margin-bottom: 12px;
+      margin-bottom: 14px;
     }
-    .device-name { font-size: 16px; font-weight: 600; }
+    .device-name {
+      font-size: 15px; font-weight: 600;
+      display: flex; align-items: center; gap: 8px;
+    }
     .status-dot {
-      width: 10px; height: 10px; border-radius: 50%;
-      display: inline-block; margin-right: 6px;
+      width: 8px; height: 8px; border-radius: 50%;
+      flex-shrink: 0;
     }
-    .status-dot.on { background: #00ff88; }
-    .status-dot.off { background: #ff4444; }
+    .status-dot.on {
+      background: var(--green);
+      box-shadow: 0 0 6px rgba(0, 255, 136, 0.5);
+    }
+    .status-dot.off { background: var(--red); }
+    .device-mode {
+      color: var(--accent); font-size: 12px; font-weight: 500;
+      background: rgba(0, 212, 255, 0.1); padding: 3px 10px;
+      border-radius: 20px;
+    }
 
-    .device-info { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 12px; }
-    .info-item { font-size: 12px; }
-    .info-label { color: #888; }
-    .info-value { color: #e0e0e0; }
+    /* Info Grid */
+    .device-info {
+      display: grid; grid-template-columns: 1fr 1fr 1fr;
+      gap: 8px; margin-bottom: 14px;
+    }
+    .info-item {
+      font-size: 11px; text-align: center;
+      background: var(--bg-elevated); border-radius: 8px; padding: 8px 4px;
+    }
+    .info-label { color: var(--text-dim); display: block; font-size: 10px; margin-bottom: 2px; }
+    .info-value { color: var(--text); font-weight: 600; font-size: 13px; }
 
+    /* Pattern Grid */
+    .section-label {
+      font-size: 11px; color: var(--text-dim); text-transform: uppercase;
+      letter-spacing: 1px; margin-bottom: 8px; font-weight: 600;
+    }
     .pattern-grid {
-      display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px;
-      margin-bottom: 12px;
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px;
+      margin-bottom: 14px;
     }
     .pat-btn {
-      background: #0a3d62; color: #e0e0e0; border: 2px solid transparent;
-      border-radius: 6px; padding: 8px 4px; font-size: 12px;
-      cursor: pointer; text-align: center; transition: all 0.2s;
+      background: var(--bg-elevated); color: var(--text);
+      border: 2px solid transparent; border-radius: 8px;
+      padding: 10px 4px; font-size: 11px; font-weight: 500;
+      cursor: pointer; text-align: center; transition: all 0.15s;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
-    .pat-btn:hover { background: #0066cc; }
-    .pat-btn.active { border-color: #00d4ff; background: #0066cc; }
+    .pat-btn:hover { background: var(--accent-dim); color: white; }
+    .pat-btn:active { transform: scale(0.96); }
+    .pat-btn.active {
+      border-color: var(--accent); background: rgba(0, 212, 255, 0.15);
+      color: var(--accent); font-weight: 700;
+    }
 
+    /* Brightness Slider */
+    .brightness-section { margin-bottom: 14px; }
     .brightness-row {
-      display: flex; align-items: center; justify-content: center; gap: 12px;
+      display: flex; align-items: center; gap: 10px;
     }
     .br-btn {
-      background: #0a3d62; color: white; border: none; border-radius: 4px;
-      padding: 8px 20px; font-size: 18px; cursor: pointer;
+      background: var(--bg-elevated); color: white; border: none;
+      border-radius: 8px; width: 40px; height: 40px;
+      font-size: 20px; cursor: pointer; transition: all 0.15s;
+      display: flex; align-items: center; justify-content: center;
     }
-    .br-btn:hover { background: #0066cc; }
-    .br-val { font-size: 20px; min-width: 50px; text-align: center; }
+    .br-btn:hover { background: var(--accent-dim); }
+    .br-btn:active { transform: scale(0.92); }
+    .br-slider {
+      flex: 1; -webkit-appearance: none; appearance: none;
+      height: 6px; border-radius: 3px;
+      background: var(--bg-elevated); outline: none;
+    }
+    .br-slider::-webkit-slider-thumb {
+      -webkit-appearance: none; appearance: none;
+      width: 22px; height: 22px; border-radius: 50%;
+      background: var(--accent); cursor: pointer;
+      box-shadow: 0 0 8px rgba(0, 212, 255, 0.4);
+    }
+    .br-val {
+      font-size: 16px; font-weight: 700; min-width: 36px;
+      text-align: center; color: var(--accent);
+    }
 
+    /* Color Picker */
+    .color-section { margin-bottom: 14px; }
+    .color-row {
+      display: flex; gap: 8px; align-items: center;
+    }
+    .color-input {
+      width: 48px; height: 48px; border: none; border-radius: 10px;
+      cursor: pointer; background: none; padding: 0;
+    }
+    .color-input::-webkit-color-swatch-wrapper { padding: 0; }
+    .color-input::-webkit-color-swatch { border: 2px solid var(--border); border-radius: 8px; }
+    .color-presets {
+      display: flex; gap: 6px; flex-wrap: wrap;
+    }
+    .color-preset {
+      width: 32px; height: 32px; border-radius: 8px; cursor: pointer;
+      border: 2px solid transparent; transition: all 0.15s;
+    }
+    .color-preset:hover { transform: scale(1.1); border-color: white; }
+
+    /* All Controls Section */
     .all-controls {
-      background: #16213e; border-radius: 10px; padding: 16px;
-      border: 1px solid #00d4ff; max-width: 600px; margin: 16px auto;
+      background: var(--bg-card); border-radius: var(--radius);
+      padding: 16px; border: 1px solid var(--accent);
+      max-width: 520px; margin: 16px auto;
+      box-shadow: 0 0 30px rgba(0, 212, 255, 0.05);
     }
-    .all-controls h2 { color: #00d4ff; font-size: 14px; margin-bottom: 10px; }
+    .all-controls h2 {
+      color: var(--accent); font-size: 13px; margin-bottom: 12px;
+      text-transform: uppercase; letter-spacing: 1px;
+    }
 
-    #connection-status {
-      text-align: center; padding: 4px; font-size: 11px; color: #888;
+    /* Offline message */
+    .offline-msg {
+      color: var(--red); font-size: 12px; text-align: center; padding: 8px;
+    }
+
+    /* Responsive */
+    @media (max-width: 400px) {
+      .pattern-grid { grid-template-columns: repeat(3, 1fr); }
+      .device-info { grid-template-columns: 1fr 1fr; }
     }
   </style>
 </head>
 <body>
   <header>
-    <h1>Revamp Hub</h1>
-    <p id="connection-status">Connecting...</p>
+    <h1>Revamp <span>Hub</span></h1>
+    <div id="connection-status">Connecting...</div>
   </header>
 
   <div id="devices" class="devices">
-    <p style="text-align:center;color:#666">Loading devices...</p>
+    <p style="text-align:center;color:var(--text-dim);font-size:13px">Discovering devices...</p>
   </div>
 
-  <div class="all-controls">
+  <div class="all-controls" id="all-section" style="display:none">
     <h2>All Devices</h2>
+    <div class="section-label">Sync Pattern</div>
     <div class="pattern-grid" id="all-patterns"></div>
+    <div class="section-label">Sync Brightness</div>
     <div class="brightness-row">
       <button class="br-btn" onclick="allBrightness('down')">-</button>
-      <span class="br-val">All</span>
+      <input type="range" class="br-slider" min="1" max="250" value="100"
+             oninput="allBrightnessVal(this.value)">
       <button class="br-btn" onclick="allBrightness('up')">+</button>
     </div>
   </div>
 
   <script src="/js/app.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js');
+    }
+  </script>
 </body>
 </html>

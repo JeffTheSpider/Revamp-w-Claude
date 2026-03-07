@@ -3,8 +3,8 @@
 ## Context
 Charlie has two ESP-based LED projects (Clock + Lamp) built 4-5 years ago. The clock firmware v2.4.0 is running with all safety features, NTP clock, 13 LED modes, REST API, and web dashboard. Wires are soldered (DMA on GPIO3). The lamp has working hardware but no code. The goal: a unified, phone-controllable system with music reactivity, ambient lighting, notifications, and custom animations - all controlled from a central hub.
 
-**Completed**: Phases 0-4 (Clock fully operational with all original features ported + 4 new patterns)
-**Next**: Phase 5 (Lamp bring-up)
+**Completed**: Phases 0-4 (Clock firmware done), Phase 6a (Hub scaffolded)
+**Next**: Phase 5 (Lamp bring-up - requires hardware access)
 
 ## Architecture
 
@@ -37,20 +37,15 @@ POST /api/restart
 
 ---
 
-## Phase 3.5: Clock Rewiring + Verification
-**Status**: NEXT - firmware uploaded, awaiting physical rewire
-
-Move 3 wires (power off first):
-1. OLED SDA: GPIO0 -> **GPIO4 (D2)**
-2. OLED SCL: GPIO2 -> **GPIO5 (D1)**
-3. NeoPixel data: GPIO3 (RX) -> **GPIO2 (D4)**
-
-**Verify**: OLED shows text, LEDs do RGB chase, web dashboard loads, telnet responds.
+## Phase 3.5: Clock Rewiring - CANCELLED
+**Status**: CANCELLED - Wires are ALL SOLDERED, cannot move.
+Solution: Use DMA on GPIO3 (original wiring) instead of UART1 on GPIO2.
+DMA kills Serial, but safe mode + telnet provide full recovery/debug.
 
 ---
 
-## Phase 4: Clock Feature Port
-Port all original features from `clock_original.ino` into v2 firmware.
+## Phase 4: Clock Feature Port - COMPLETE
+All original features ported from `clock_original.ino` into v2 firmware.
 
 ### 4a: NTP Time + Clock Face
 - Add NTPClient, TimeLib, Timezone libraries
@@ -104,12 +99,13 @@ Port all original features from `clock_original.ino` into v2 firmware.
 
 ## Phase 6: Central Hub
 
-### 6a: Hub Foundation
+### 6a: Hub Foundation - COMPLETE
 - `Hub/` directory, Node.js + Express + WebSocket
-- Device discovery via mDNS (fallback to static IPs)
+- Device discovery via static IPs (mirror auto-discovered on start)
 - Health checks every 10s
 - API proxy: `/api/devices/:id/*` -> ESP device
-- **Files**: `Hub/server.js`, `Hub/src/services/device-manager.js`
+- All-devices broadcast endpoints
+- **Files**: `Hub/server.js`, `Hub/src/services/device-manager.js`, `Hub/src/api/routes.js`
 
 ### 6b: PWA Control Panel
 - Dark theme single-page app (`#1a1a2e` background, `#00d4ff` accents)
