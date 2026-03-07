@@ -1,0 +1,19 @@
+# Build artifacts
+*.o
+*.elf
+*.hex
+*.bin
+build/
+.pio/
+
+# IDE files
+.vscode/
+*.code-workspace
+
+# OS files
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# Claude internals
+.claude/
