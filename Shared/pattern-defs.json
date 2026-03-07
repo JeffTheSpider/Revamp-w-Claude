@@ -1,0 +1,162 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Pattern Definitions",
+  "description": "Metadata for all LED patterns across devices. Used by Hub UI for auto-generating controls.",
+  "version": "1.0.0",
+
+  "patterns": {
+    "clock": {
+      "name": "Clock",
+      "description": "Hour (green), minute (blue), second (red) hands on a 60-LED ring",
+      "category": "functional",
+      "devices": ["mirror"],
+      "fps": 1,
+      "params": []
+    },
+    "red": {
+      "name": "Red",
+      "description": "Solid red",
+      "category": "solid",
+      "devices": ["mirror", "lamp"],
+      "fps": 0,
+      "params": []
+    },
+    "green": {
+      "name": "Green",
+      "description": "Solid green",
+      "category": "solid",
+      "devices": ["mirror", "lamp"],
+      "fps": 0,
+      "params": []
+    },
+    "blue": {
+      "name": "Blue",
+      "description": "Solid blue",
+      "category": "solid",
+      "devices": ["mirror", "lamp"],
+      "fps": 0,
+      "params": []
+    },
+    "white": {
+      "name": "White",
+      "description": "Solid white (brightness capped at 160 to protect LEDs)",
+      "category": "solid",
+      "devices": ["mirror", "lamp"],
+      "fps": 0,
+      "params": []
+    },
+    "special1": {
+      "name": "Blue Flash",
+      "description": "Random blue pixels accumulate across the ring",
+      "category": "animated",
+      "devices": ["mirror"],
+      "fps": 10,
+      "params": []
+    },
+    "special2": {
+      "name": "Multicolor",
+      "description": "Random colored pixels fill the ring over time",
+      "category": "animated",
+      "devices": ["mirror"],
+      "fps": 10,
+      "params": []
+    },
+    "special3": {
+      "name": "Sweep",
+      "description": "All LEDs sweep through blue brightness 0-255, wrapping",
+      "category": "animated",
+      "devices": ["mirror"],
+      "fps": 10,
+      "params": []
+    },
+    "rainbow": {
+      "name": "Rainbow",
+      "description": "Smooth HSV rainbow distributed across the ring, rotating",
+      "category": "animated",
+      "devices": ["mirror", "lamp"],
+      "fps": 30,
+      "params": [
+        { "name": "speed", "type": "float", "min": 0.1, "max": 5.0, "default": 1.0, "description": "Rotation speed multiplier" }
+      ]
+    },
+    "candle": {
+      "name": "Candle",
+      "description": "Warm flickering orange-red firelight effect",
+      "category": "ambient",
+      "devices": ["mirror", "lamp"],
+      "fps": 20,
+      "params": [
+        { "name": "warmth", "type": "float", "min": 0.0, "max": 1.0, "default": 0.4, "description": "Color temperature (0=red, 1=yellow)" }
+      ]
+    },
+    "wave": {
+      "name": "Color Wave",
+      "description": "Sinusoidal blue-cyan wave traveling around the ring",
+      "category": "animated",
+      "devices": ["mirror", "lamp"],
+      "fps": 30,
+      "params": [
+        { "name": "wavelength", "type": "int", "min": 5, "max": 30, "default": 15, "description": "Wave period in pixels" },
+        { "name": "speed", "type": "float", "min": 0.1, "max": 5.0, "default": 1.0, "description": "Wave speed multiplier" }
+      ]
+    },
+    "sparkle": {
+      "name": "Sparkle",
+      "description": "White sparkles appear randomly and fade out like twinkling stars",
+      "category": "animated",
+      "devices": ["mirror", "lamp"],
+      "fps": 20,
+      "params": [
+        { "name": "density", "type": "int", "min": 1, "max": 5, "default": 1, "description": "New sparkles per frame" },
+        { "name": "fadeRate", "type": "int", "min": 4, "max": 24, "default": 12, "description": "Brightness decay per frame" }
+      ]
+    },
+    "off": {
+      "name": "Off",
+      "description": "All LEDs off",
+      "category": "utility",
+      "devices": ["mirror", "lamp"],
+      "fps": 0,
+      "params": []
+    },
+    "morse": {
+      "name": "Morse Code",
+      "description": "Translates text to morse code and blinks it on the LEDs",
+      "category": "functional",
+      "devices": ["lamp"],
+      "fps": 10,
+      "params": [
+        { "name": "text", "type": "string", "default": "HELLO", "description": "Text to encode" },
+        { "name": "speed", "type": "int", "min": 50, "max": 500, "default": 150, "description": "Dot duration in ms" }
+      ]
+    },
+    "color": {
+      "name": "Custom Color",
+      "description": "User-selected RGB color via color picker",
+      "category": "solid",
+      "devices": ["mirror", "lamp"],
+      "fps": 0,
+      "params": [
+        { "name": "r", "type": "int", "min": 0, "max": 255, "default": 255 },
+        { "name": "g", "type": "int", "min": 0, "max": 255, "default": 100 },
+        { "name": "b", "type": "int", "min": 0, "max": 255, "default": 50 }
+      ]
+    }
+  },
+
+  "categories": {
+    "functional": { "label": "Functional", "description": "Utility patterns (clock, morse)" },
+    "solid":      { "label": "Solid Colors", "description": "Static single-color fills" },
+    "animated":   { "label": "Animated", "description": "Moving/changing patterns" },
+    "ambient":    { "label": "Ambient", "description": "Mood/atmosphere patterns" },
+    "utility":    { "label": "Utility", "description": "System patterns (off, test)" }
+  },
+
+  "palettes": {
+    "sunrise":   { "colors": ["#1a0a2e", "#8b2252", "#ff6b35", "#ffa62f", "#fff4e0"], "description": "Dark to warm white sunrise" },
+    "ocean":     { "colors": ["#001122", "#003355", "#005588", "#0088bb", "#00bbee"], "description": "Deep to light ocean blue" },
+    "forest":    { "colors": ["#0a1a0a", "#1a3a1a", "#2a5a2a", "#4a8a4a", "#6aba6a"], "description": "Dark to light forest green" },
+    "fireplace": { "colors": ["#1a0500", "#4a1000", "#8b2500", "#cc4400", "#ff6600"], "description": "Warm ember to flame" },
+    "nightsky":  { "colors": ["#0a0a1a", "#101030", "#1a1a4a", "#2a2a6a", "#3a3a8a"], "description": "Deep night sky" }
+  }
+}

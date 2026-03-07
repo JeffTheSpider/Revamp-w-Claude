@@ -15,5 +15,9 @@ Thumbs.db
 .DS_Store
 desktop.ini
 
+# Node.js
+node_modules/
+package-lock.json
+
 # Claude internals
 .claude/

@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Revamp Hub</title>
+  <meta name="theme-color" content="#1a1a2e">
+  <link rel="manifest" href="/manifest.json">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #1a1a2e; color: #e0e0e0;
+      min-height: 100vh; padding: 16px;
+    }
+    header {
+      text-align: center; padding: 12px 0;
+      border-bottom: 1px solid #2a2a4a; margin-bottom: 16px;
+    }
+    header h1 { color: #00d4ff; font-size: 22px; }
+    header p { color: #666; font-size: 12px; }
+
+    .devices { display: flex; flex-direction: column; gap: 12px; max-width: 600px; margin: 0 auto; }
+
+    .device-card {
+      background: #16213e; border-radius: 10px; padding: 16px;
+      border: 1px solid #2a2a4a; transition: border-color 0.3s;
+    }
+    .device-card.online { border-color: #00ff88; }
+    .device-card.offline { border-color: #ff4444; opacity: 0.6; }
+
+    .device-header {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: 12px;
+    }
+    .device-name { font-size: 16px; font-weight: 600; }
+    .status-dot {
+      width: 10px; height: 10px; border-radius: 50%;
+      display: inline-block; margin-right: 6px;
+    }
+    .status-dot.on { background: #00ff88; }
+    .status-dot.off { background: #ff4444; }
+
+    .device-info { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 12px; }
+    .info-item { font-size: 12px; }
+    .info-label { color: #888; }
+    .info-value { color: #e0e0e0; }
+
+    .pattern-grid {
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px;
+      margin-bottom: 12px;
+    }
+    .pat-btn {
+      background: #0a3d62; color: #e0e0e0; border: 2px solid transparent;
+      border-radius: 6px; padding: 8px 4px; font-size: 12px;
+      cursor: pointer; text-align: center; transition: all 0.2s;
+    }
+    .pat-btn:hover { background: #0066cc; }
+    .pat-btn.active { border-color: #00d4ff; background: #0066cc; }
+
+    .brightness-row {
+      display: flex; align-items: center; justify-content: center; gap: 12px;
+    }
+    .br-btn {
+      background: #0a3d62; color: white; border: none; border-radius: 4px;
+      padding: 8px 20px; font-size: 18px; cursor: pointer;
+    }
+    .br-btn:hover { background: #0066cc; }
+    .br-val { font-size: 20px; min-width: 50px; text-align: center; }
+
+    .all-controls {
+      background: #16213e; border-radius: 10px; padding: 16px;
+      border: 1px solid #00d4ff; max-width: 600px; margin: 16px auto;
+    }
+    .all-controls h2 { color: #00d4ff; font-size: 14px; margin-bottom: 10px; }
+
+    #connection-status {
+      text-align: center; padding: 4px; font-size: 11px; color: #888;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Revamp Hub</h1>
+    <p id="connection-status">Connecting...</p>
+  </header>
+
+  <div id="devices" class="devices">
+    <p style="text-align:center;color:#666">Loading devices...</p>
+  </div>
+
+  <div class="all-controls">
+    <h2>All Devices</h2>
+    <div class="pattern-grid" id="all-patterns"></div>
+    <div class="brightness-row">
+      <button class="br-btn" onclick="allBrightness('down')">-</button>
+      <span class="br-val">All</span>
+      <button class="br-btn" onclick="allBrightness('up')">+</button>
+    </div>
+  </div>
+
+  <script src="/js/app.js"></script>
+</body>
+</html>

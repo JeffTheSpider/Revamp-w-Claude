@@ -17,7 +17,7 @@ const int EEPROM_Size = 512;
 // ***** NeoPixel *****//
 const uint16_t PixelCount = 60;
 #define colorSaturation 32 // 0 to 255
-NeoPixelBus<NeoGrbFeature,NeoEsp8266BitBang800KbpsMethod> strip(PixelCount);
+NeoPixelBus<NeoGrbFeature,NeoEsp8266BitBang800KbpsMethod> strip(PixelCount, 3); // BitBang on GPIO3 - avoids DMA serial conflict
 RgbColor red(colorSaturation, 0, 0);
 RgbColor green(0, colorSaturation, 0);
 RgbColor blue(0, 0, colorSaturation);
@@ -547,7 +547,7 @@ void handleRoot() {
 
 void setup() {
   Connect_SoftAP();
-  Serial.begin(115200);
+  // Serial.begin(115200); // Disabled - GPIO3 (RX) is used for NeoPixel data
   pinMode(0, INPUT);
   EEPROM_Read();
   Serial.println("WiFi credentials: " + String(ssid) + " " + String(password));

@@ -1,0 +1,179 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Revamp w Claude - Device REST API Contract",
+  "description": "Shared API contract that all ESP devices (Clock, Lamp) implement. The Hub proxies these endpoints.",
+  "version": "1.0.0",
+  "basePath": "/api",
+
+  "endpoints": {
+    "GET /api/status": {
+      "description": "Full device status as JSON. Hub polls this for health checks.",
+      "response": {
+        "type": "object",
+        "required": ["device", "version", "uptime", "freeHeap", "wifiConnected", "mode", "brightness"],
+        "properties": {
+          "device":        { "type": "string", "description": "Device ID (e.g. 'mirror', 'lamp')" },
+          "version":       { "type": "string", "description": "Firmware version (e.g. '2.4.0')" },
+          "safeMode":      { "type": "boolean", "description": "True if device booted in safe mode" },
+          "uptime":        { "type": "integer", "description": "Seconds since boot" },
+          "freeHeap":      { "type": "integer", "description": "Free heap memory in bytes" },
+          "wifiConnected": { "type": "boolean" },
+          "rssi":          { "type": "integer", "description": "WiFi signal strength in dBm" },
+          "ip":            { "type": "string", "description": "Device IP address" },
+          "mode":          { "type": "string", "description": "Current pattern ID (e.g. 'clock', 'rainbow')" },
+          "modeName":      { "type": "string", "description": "Human-readable mode name" },
+          "brightness":    { "type": "integer", "minimum": 1, "maximum": 250 },
+          "neopixel":      { "type": "string", "description": "NeoPixel driver info" },
+          "ntpValid":      { "type": "boolean", "description": "True if NTP time is synced" },
+          "stable":        { "type": "boolean", "description": "True if crash counter cleared" }
+        }
+      }
+    },
+
+    "GET /api/patterns": {
+      "description": "List all available LED patterns on this device.",
+      "response": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["id", "name"],
+          "properties": {
+            "id":   { "type": "string", "description": "Machine-readable pattern ID" },
+            "name": { "type": "string", "description": "Human-readable pattern name" },
+            "params": {
+              "type": "array",
+              "description": "Optional tunable parameters for this pattern",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": { "type": "string" },
+                  "type": { "type": "string", "enum": ["int", "float", "color", "bool"] },
+                  "min":  { "type": "number" },
+                  "max":  { "type": "number" },
+                  "default": {}
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "GET /api/pattern?id={patternId}": {
+      "description": "Set the active LED pattern by ID. Redirects to / on success.",
+      "parameters": {
+        "id": { "type": "string", "required": true, "description": "Pattern ID from /api/patterns" }
+      },
+      "response": { "type": "redirect", "location": "/" }
+    },
+
+    "GET /api/brightness": {
+      "description": "Adjust brightness. Use dir=up|down for relative, or val=N for absolute.",
+      "parameters": {
+        "dir": { "type": "string", "enum": ["up", "down"], "description": "Relative adjustment" },
+        "val": { "type": "integer", "minimum": 1, "maximum": 250, "description": "Absolute brightness" }
+      },
+      "response": { "type": "redirect", "location": "/" }
+    },
+
+    "GET /api/wifi/scan": {
+      "description": "Scan for available WiFi networks. Returns array of networks.",
+      "response": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "ssid": { "type": "string" },
+            "rssi": { "type": "integer" },
+            "enc":  { "type": "boolean", "description": "True if network is encrypted" }
+          }
+        }
+      }
+    },
+
+    "GET /api/wifi/config": {
+      "description": "Save new WiFi credentials and restart. Device will connect to new network on reboot.",
+      "parameters": {
+        "ssid": { "type": "string", "required": true, "maxLength": 30 },
+        "pass": { "type": "string", "maxLength": 30 }
+      },
+      "response": { "type": "text", "description": "Confirmation message, then device restarts" }
+    },
+
+    "GET /restart": {
+      "description": "Restart the device.",
+      "response": { "type": "html", "description": "Restart confirmation page" }
+    }
+  },
+
+  "hub_endpoints": {
+    "GET /api/devices": {
+      "description": "List all discovered devices with their status.",
+      "response": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id":       { "type": "string" },
+            "name":     { "type": "string" },
+            "ip":       { "type": "string" },
+            "online":   { "type": "boolean" },
+            "lastSeen": { "type": "string", "format": "date-time" },
+            "status":   { "type": "object", "description": "Last polled /api/status response" }
+          }
+        }
+      }
+    },
+
+    "GET /api/devices/:id/status": {
+      "description": "Proxy to device's /api/status endpoint."
+    },
+
+    "POST /api/devices/:id/pattern": {
+      "description": "Set pattern on a specific device.",
+      "body": {
+        "id": { "type": "string", "required": true }
+      }
+    },
+
+    "POST /api/devices/:id/brightness": {
+      "description": "Set brightness on a specific device.",
+      "body": {
+        "value": { "type": "integer", "minimum": 1, "maximum": 250 }
+      }
+    },
+
+    "POST /api/devices/all/pattern": {
+      "description": "Set pattern on all devices simultaneously.",
+      "body": {
+        "id": { "type": "string", "required": true }
+      }
+    },
+
+    "POST /api/scenes": {
+      "description": "Save current state of all devices as a named scene.",
+      "body": {
+        "name": { "type": "string", "required": true }
+      }
+    },
+
+    "POST /api/scenes/:name/activate": {
+      "description": "Activate a saved scene."
+    }
+  },
+
+  "websocket": {
+    "path": "/ws",
+    "description": "Real-time communication between Hub and devices/clients.",
+    "messages": {
+      "client_to_hub": {
+        "color_update":  { "r": "int", "g": "int", "b": "int", "device": "string" },
+        "beat_subscribe": { "device": "string", "enabled": "bool" }
+      },
+      "hub_to_client": {
+        "device_status": { "id": "string", "status": "object" },
+        "beat_data":     { "bass": "float", "mid": "float", "treble": "float", "beat": "bool" }
+      }
+    }
+  }
+}
