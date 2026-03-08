@@ -23,8 +23,13 @@
           "mode":          { "type": "string", "description": "Current pattern ID (e.g. 'clock', 'rainbow')" },
           "modeName":      { "type": "string", "description": "Human-readable mode name" },
           "brightness":    { "type": "integer", "minimum": 1, "maximum": 250 },
+          "color":         { "type": "object", "description": "Current custom RGB color",
+                             "properties": { "r": {"type":"integer"}, "g": {"type":"integer"}, "b": {"type":"integer"} } },
           "neopixel":      { "type": "string", "description": "NeoPixel driver info" },
-          "ntpValid":      { "type": "boolean", "description": "True if NTP time is synced" },
+          "oled":          { "type": "string", "description": "OLED display info (clock only)" },
+          "ntpValid":      { "type": "boolean", "description": "True if NTP time is synced (clock only)" },
+          "ledCount":      { "type": "integer", "description": "Total LED count (lamp only)" },
+          "strips":        { "type": "integer", "description": "Number of LED strips (lamp only)" },
           "stable":        { "type": "boolean", "description": "True if crash counter cleared" }
         }
       }
@@ -74,6 +79,43 @@
         "val": { "type": "integer", "minimum": 1, "maximum": 250, "description": "Absolute brightness" }
       },
       "response": { "type": "redirect", "location": "/" }
+    },
+
+    "GET /api/color": {
+      "description": "Set custom RGB color and switch to color mode. Used by Hub color picker and WebSocket.",
+      "parameters": {
+        "r": { "type": "integer", "minimum": 0, "maximum": 255, "description": "Red channel" },
+        "g": { "type": "integer", "minimum": 0, "maximum": 255, "description": "Green channel" },
+        "b": { "type": "integer", "minimum": 0, "maximum": 255, "description": "Blue channel" }
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "ok": { "type": "boolean" }
+        }
+      }
+    },
+
+    "GET /api/morse": {
+      "description": "Morse code playback on lamp LEDs. Lamp-specific endpoint.",
+      "parameters": {
+        "text":  { "type": "string", "required": true, "maxLength": 62, "description": "Text to encode (A-Z, 0-9, spaces)" },
+        "wpm":   { "type": "integer", "minimum": 5, "maximum": 30, "default": 12, "description": "Words per minute" },
+        "loop":  { "type": "string", "enum": ["0", "1"], "default": "0", "description": "Repeat continuously" },
+        "stop":  { "type": "string", "enum": ["1"], "description": "Stop current playback" },
+        "r":     { "type": "integer", "minimum": 0, "maximum": 255, "description": "Morse color red (optional)" },
+        "g":     { "type": "integer", "minimum": 0, "maximum": 255, "description": "Morse color green (optional)" },
+        "b":     { "type": "integer", "minimum": 0, "maximum": 255, "description": "Morse color blue (optional)" }
+      },
+      "response": {
+        "type": "object",
+        "properties": {
+          "ok": { "type": "boolean" },
+          "text": { "type": "string" },
+          "wpm": { "type": "integer" },
+          "loop": { "type": "boolean" }
+        }
+      }
     },
 
     "GET /api/wifi/scan": {

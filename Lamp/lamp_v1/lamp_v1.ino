@@ -58,6 +58,7 @@ void logDebug(const String& msg);
 
 // === Include modular headers ===
 #include "led_patterns.h"
+#include "morse.h"
 
 // === EEPROM Debounce ===
 bool eepromDirty = false;
@@ -554,6 +555,9 @@ void handleApiPattern() {
     String id = server.arg("id");
     LedMode newMode = modeFromId(id);
 
+    // Stop morse if active (pattern takes priority)
+    if (morseIsPlaying()) morseStop();
+
     // Custom color: accept r, g, b query params
     if (newMode == MODE_COLOR && server.hasArg("r")) {
       uint8_t r = (uint8_t)server.arg("r").toInt();
@@ -612,6 +616,52 @@ void handleApiColor() {
   setCustomColor(r, g, b);
   setMode(MODE_COLOR);
   server.send(200, "application/json", "{\"ok\":true}");
+}
+
+// ============================================================
+// Web Server - Morse Code (GET /api/morse?text=X&wpm=12&loop=0)
+// ============================================================
+// Queues morse code playback. Overrides current LED pattern.
+// Stop with /api/morse?stop=1 or by setting a new pattern.
+void handleApiMorse() {
+  if (safeMode) {
+    server.send(200, "application/json", "{\"ok\":false,\"reason\":\"safe mode\"}");
+    return;
+  }
+
+  // Stop command
+  if (server.hasArg("stop")) {
+    morseStop();
+    modeChanged = true;  // Redraw current pattern
+    server.send(200, "application/json", "{\"ok\":true,\"action\":\"stopped\"}");
+    return;
+  }
+
+  if (!server.hasArg("text")) {
+    server.send(400, "application/json", "{\"ok\":false,\"reason\":\"missing text param\"}");
+    return;
+  }
+
+  String text = server.arg("text");
+  int wpm = server.hasArg("wpm") ? server.arg("wpm").toInt() : 12;
+  bool loop = server.hasArg("loop") && server.arg("loop") == "1";
+
+  // Optional color
+  if (server.hasArg("r")) {
+    uint8_t r = (uint8_t)server.arg("r").toInt();
+    uint8_t g = server.hasArg("g") ? (uint8_t)server.arg("g").toInt() : 120;
+    uint8_t b = server.hasArg("b") ? (uint8_t)server.arg("b").toInt() : 0;
+    morseSetColor(r, g, b);
+  }
+
+  morseStart(text.c_str(), wpm, loop);
+  logInfo("Morse: \"" + text + "\" wpm=" + String(wpm) + (loop ? " loop" : ""));
+
+  char json[128];
+  snprintf(json, sizeof(json),
+    "{\"ok\":true,\"text\":\"%s\",\"wpm\":%d,\"loop\":%s}",
+    text.c_str(), wpm, loop ? "true" : "false");
+  server.send(200, "application/json", json);
 }
 
 // ============================================================
@@ -844,12 +894,25 @@ void handleTelnet() {
     ledStartupTest();
     modeChanged = true;
 
+  } else if (cmd.startsWith("morse ")) {
+    String text = cmd.substring(6);
+    if (text == "stop") {
+      morseStop();
+      modeChanged = true;
+      TelnetStream.println("Morse stopped");
+    } else {
+      morseStart(text.c_str(), 12, false);
+      TelnetStream.println("Morse: " + text);
+    }
+
   } else if (cmd == "help") {
     TelnetStream.println("Commands:");
     TelnetStream.println("  status     - System status");
     TelnetStream.println("  modes      - List LED modes");
     TelnetStream.println("  mode <id>  - Set LED mode");
     TelnetStream.println("  b+ / b-    - Adjust brightness");
+    TelnetStream.println("  morse <text> - Morse code playback");
+    TelnetStream.println("  morse stop - Stop morse playback");
     TelnetStream.println("  led test   - Run LED test");
     TelnetStream.println("  heap       - Show free heap");
     TelnetStream.println("  restart    - Restart device");
@@ -911,6 +974,7 @@ void setup() {
   server.on("/api/pattern", handleApiPattern);
   server.on("/api/brightness", handleApiBrightness);
   server.on("/api/color", handleApiColor);
+  server.on("/api/morse", handleApiMorse);
   server.on("/log", handleLog);
   server.on("/led", handleLed);
   server.on("/wifi", handleWifiPage);
@@ -943,7 +1007,11 @@ void loop() {
 
   // LED patterns (skip during OTA or safe mode)
   if (!safeMode && !otaInProgress) {
-    tickPatterns(Brightness);
+    if (morseIsPlaying()) {
+      morseTick();  // Morse overrides patterns while active
+    } else {
+      tickPatterns(Brightness);
+    }
   }
 
   // Debounced EEPROM save (5s after last change)
