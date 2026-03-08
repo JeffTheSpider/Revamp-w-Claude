@@ -231,6 +231,75 @@ function createDeviceCard(dev) {
   colorSection.appendChild(colorRow);
   card.appendChild(colorSection);
 
+  // Morse code section (lamp only - has strips/ledCount in status)
+  if (s.strips || dev.id === 'lamp') {
+    const morseLabel = el('div', 'section-label');
+    morseLabel.textContent = 'Morse Code';
+    card.appendChild(morseLabel);
+    const morseSection = el('div', 'morse-section');
+
+    const morseRow = el('div', 'morse-row');
+    const morseInput = document.createElement('input');
+    morseInput.type = 'text';
+    morseInput.className = 'morse-input';
+    morseInput.placeholder = 'Type a message...';
+    morseInput.maxLength = 62;
+
+    const morseWpm = document.createElement('select');
+    morseWpm.className = 'morse-wpm';
+    [8, 10, 12, 15, 20, 25].forEach(w => {
+      const opt = document.createElement('option');
+      opt.value = String(w);
+      opt.textContent = w + ' WPM';
+      if (w === 12) opt.selected = true;
+      morseWpm.appendChild(opt);
+    });
+
+    const morseLoop = document.createElement('label');
+    morseLoop.className = 'morse-loop-label';
+    const loopCb = document.createElement('input');
+    loopCb.type = 'checkbox';
+    loopCb.className = 'morse-loop-cb';
+    morseLoop.appendChild(loopCb);
+    morseLoop.appendChild(document.createTextNode(' Loop'));
+
+    const morseSend = el('button', 'morse-send-btn');
+    morseSend.textContent = 'Send';
+    morseSend.onclick = () => {
+      const text = morseInput.value.trim();
+      if (!text) return;
+      sendMorse(dev.id, text, parseInt(morseWpm.value), loopCb.checked);
+      morseSend.textContent = 'Sending...';
+      setTimeout(() => { morseSend.textContent = 'Send'; }, 1000);
+    };
+
+    const morseStop = el('button', 'morse-stop-btn');
+    morseStop.textContent = 'Stop';
+    morseStop.onclick = () => stopMorse(dev.id);
+
+    morseRow.appendChild(morseInput);
+    morseRow.appendChild(morseWpm);
+    morseRow.appendChild(morseLoop);
+    morseRow.appendChild(morseSend);
+    morseRow.appendChild(morseStop);
+    morseSection.appendChild(morseRow);
+
+    // Quick presets
+    const morsePresets = el('div', 'morse-presets');
+    const presetMsgs = ['SOS', 'HELLO', 'HI', 'LOVE'];
+    presetMsgs.forEach(msg => {
+      const btn = el('button', 'morse-preset-btn');
+      btn.textContent = msg;
+      btn.onclick = () => {
+        morseInput.value = msg;
+        sendMorse(dev.id, msg, parseInt(morseWpm.value), loopCb.checked);
+      };
+      morsePresets.appendChild(btn);
+    });
+    morseSection.appendChild(morsePresets);
+    card.appendChild(morseSection);
+  }
+
   return card;
 }
 
@@ -311,6 +380,26 @@ async function sendColor(deviceId, r, g, b) {
   if (ws && ws.readyState === 1) {
     ws.send(JSON.stringify({ type: 'color_update', device: deviceId, r, g, b }));
   }
+}
+
+async function sendMorse(deviceId, text, wpm, loop) {
+  try {
+    await fetch('/api/devices/' + deviceId + '/morse', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, wpm, loop })
+    });
+  } catch (_) { showToast('Failed to send morse', 'error'); }
+}
+
+async function stopMorse(deviceId) {
+  try {
+    await fetch('/api/devices/' + deviceId + '/morse', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ stop: true })
+    });
+  } catch (_) {}
 }
 
 async function allPattern(patternId) {

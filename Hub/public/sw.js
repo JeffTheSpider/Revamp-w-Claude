@@ -5,7 +5,7 @@
 // network-first (device status must be live).
 // ============================================================
 
-const CACHE_NAME = 'revamp-hub-v2';
+const CACHE_NAME = 'revamp-hub-v3';
 const APP_SHELL = [
   '/',
   '/index.html',
@@ -47,8 +47,15 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // App shell: cache-first, fallback to network
+  // App shell: network-first, fallback to cache (avoids stale JS)
   event.respondWith(
-    caches.match(event.request).then((cached) => cached || fetch(event.request))
+    fetch(event.request)
+      .then((response) => {
+        // Update cache with fresh version
+        const clone = response.clone();
+        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+        return response;
+      })
+      .catch(() => caches.match(event.request))
   );
 });

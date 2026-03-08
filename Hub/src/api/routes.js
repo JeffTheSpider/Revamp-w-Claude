@@ -76,6 +76,38 @@ router.post('/devices/:id/brightness', async (req, res) => {
   }
 });
 
+// POST /api/devices/:id/morse - Send morse code to device (lamp only)
+router.post('/devices/:id/morse', async (req, res) => {
+  const dm = req.app.get('deviceManager');
+  const { text, wpm, loop, stop, r, g, b } = req.body;
+
+  if (stop) {
+    try {
+      await dm.sendCommand(req.params.id, '/api/morse', { stop: 1 });
+      return res.json({ ok: true, action: 'stopped' });
+    } catch (err) {
+      return res.status(502).json({ error: err.message });
+    }
+  }
+
+  if (!text) {
+    return res.status(400).json({ error: 'Missing text' });
+  }
+
+  try {
+    const params = { text };
+    if (wpm) params.wpm = wpm;
+    if (loop) params.loop = '1';
+    if (r !== undefined) params.r = r;
+    if (g !== undefined) params.g = g;
+    if (b !== undefined) params.b = b;
+    const result = await dm.sendCommand(req.params.id, '/api/morse', params);
+    res.json(result);
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
 // POST /api/devices/all/pattern - Set pattern on all devices
 router.post('/devices/all/pattern', async (req, res) => {
   const dm = req.app.get('deviceManager');

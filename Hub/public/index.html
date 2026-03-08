@@ -173,6 +173,48 @@
     }
     .color-preset:hover { transform: scale(1.1); border-color: white; }
 
+    /* Morse Code */
+    .morse-section { margin-bottom: 14px; }
+    .morse-row {
+      display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
+    }
+    .morse-input {
+      flex: 1; min-width: 120px; padding: 8px 10px; border-radius: 8px;
+      border: 1px solid var(--border); background: var(--bg-main); color: var(--text);
+      font-size: 14px;
+    }
+    .morse-input::placeholder { color: #555; }
+    .morse-wpm {
+      padding: 8px 6px; border-radius: 8px; border: 1px solid var(--border);
+      background: var(--bg-main); color: var(--text); font-size: 12px;
+    }
+    .morse-loop-label {
+      font-size: 12px; color: var(--text-dim); white-space: nowrap; cursor: pointer;
+    }
+    .morse-loop-cb { accent-color: var(--accent); }
+    .morse-send-btn {
+      padding: 8px 14px; border-radius: 8px; border: none; cursor: pointer;
+      background: var(--accent); color: white; font-size: 13px; font-weight: 600;
+      transition: all 0.15s;
+    }
+    .morse-send-btn:hover { filter: brightness(1.2); }
+    .morse-stop-btn {
+      padding: 8px 12px; border-radius: 8px; border: 1px solid #c0392b; cursor: pointer;
+      background: transparent; color: #c0392b; font-size: 13px;
+      transition: all 0.15s;
+    }
+    .morse-stop-btn:hover { background: #c0392b; color: white; }
+    .morse-presets {
+      display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap;
+    }
+    .morse-preset-btn {
+      padding: 5px 12px; border-radius: 6px; border: 1px solid var(--border);
+      background: var(--bg-main); color: var(--text-dim); cursor: pointer;
+      font-size: 12px; font-family: monospace; letter-spacing: 1px;
+      transition: all 0.15s;
+    }
+    .morse-preset-btn:hover { border-color: var(--accent); color: var(--accent); }
+
     /* All Controls Section */
     .all-controls {
       background: var(--bg-card); border-radius: var(--radius);
