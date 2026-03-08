@@ -2,7 +2,7 @@
 
 ## Overview
 This workspace contains Charlie's hobby hardware projects being revamped with Claude's help.
-Three subsystems: Clock (ESP8266), Lamp (ESP32), and Hub (Node.js) forming a unified LED control system.
+Three subsystems: Clock (ESP8266), Lamp (ESP8266), and Hub (Node.js) forming a unified LED control system.
 
 ## Projects
 
@@ -15,17 +15,18 @@ Three subsystems: Clock (ESP8266), Lamp (ESP32), and Hub (Node.js) forming a uni
 - **Libraries**: NeoPixelBus (DMA), ESP8266 SSD1306 (ThingPulse), TelnetStream, NTPClient, TimeLib, Timezone
 - **Original code**: `Clock/Original Code/clock_original.ino` (reference only)
 
-### Lamp - NOT STARTED
-- **Hardware**: Likely ESP32, ~30 addressable LEDs embedded in resin
-- **Physical**: Wooden + resin lamp, turned on a wood lathe
-- **Features planned**: Mirror clock safety architecture, morse code, color control
-- **Location**: `Lamp/`
-- **Target**: lamp.local at 192.168.0.202
+### Lamp ("Charlie's Lamp") - FIRMWARE COMPLETE (v1.0.0)
+- **Hardware**: ESP8266EX (NodeMCU), 24x WS2812B (4 strips x 6 LEDs), embedded under resin
+- **Firmware**: `Lamp/lamp_v1/` - OTA, safe mode, watchdog, telnet, 12 LED patterns, web dashboard
+- **Wiring**: GPIO3=NeoPixel DMA (same as clock), GPIO0=FLASH button
+- **Network**: Static IP 192.168.0.202, mDNS lamp.local, SoftAP fallback
+- **Libraries**: NeoPixelBus (DMA), TelnetStream
+- **Serial**: DISABLED (DMA conflicts with GPIO3/RX) - use Telnet instead
 
-### Hub - SCAFFOLDED
+### Hub - FUNCTIONAL (Phase 6c)
 - **Stack**: Node.js + Express + WebSocket
 - **Location**: `Hub/`
-- **Features**: Device discovery, REST proxy, PWA control panel
+- **Features**: Device discovery, REST proxy, PWA control panel, scenes + scheduling
 - **Run**: `cd Hub && npm start` (port 3000)
 
 ## Development Environment
@@ -63,10 +64,16 @@ Clock/clock_v2/          # Active firmware
   led_patterns.h         # 13 LED patterns, dead pixel map
   build/                 # Compiled binary
 
+Lamp/lamp_v1/            # Active firmware
+  lamp_v1.ino            # Main (~730 lines)
+  config.h               # Pin defs, constants, EEPROM layout
+  led_patterns.h         # 12 LED patterns (no dead pixels)
+  build/                 # Compiled binary
+
 Hub/                     # Central control server
   server.js              # Express + WebSocket
-  src/services/          # Device manager
-  src/api/               # REST routes
+  src/services/          # Device manager, scene manager
+  src/api/               # REST routes (devices, scenes)
   public/                # PWA frontend
 
 Shared/
@@ -79,7 +86,10 @@ Clock/Original Code/     # Reference only
 ## Key Technical Notes
 - ESP8266 NeoPixelBus DMA is hardwired to GPIO3 - cannot be changed
 - DMA kills Serial but safe mode skips NeoPixel init for USB recovery
-- EEPROM magic number 0xC10C validates stored mode/brightness
+- Both devices use identical DMA GPIO3 wiring (uncle built both)
+- Clock EEPROM magic: 0xC10C, Lamp EEPROM magic: 0x1A4B
 - Adaptive brightness delta: >99=step 10, >49=step 5, else=step 1
 - WiFi credentials stored in EEPROM bytes 0-63, brightness at 500, mode at 501
 - Clock face overlap: clear-then-layer approach (hour→minute→second priority)
+- WiFi provisioner sketch needed for lamp (writes EEPROM before DMA kills serial)
+- Lamp COM port may change on USB replug (was COM3, became COM6)
