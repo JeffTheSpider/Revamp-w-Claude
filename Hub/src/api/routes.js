@@ -76,6 +76,34 @@ router.post('/devices/:id/brightness', async (req, res) => {
   }
 });
 
+// POST /api/devices/:id/color - Set custom RGB color on device
+router.post('/devices/:id/color', async (req, res) => {
+  const dm = req.app.get('deviceManager');
+  const { r, g, b } = req.body;
+
+  if (r === undefined || g === undefined || b === undefined) {
+    return res.status(400).json({ error: 'Missing r, g, b values' });
+  }
+
+  try {
+    await dm.sendColor(req.params.id, r, g, b);
+    res.json({ ok: true, color: { r, g, b } });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+// POST /api/devices/:id/restart - Restart a device
+router.post('/devices/:id/restart', async (req, res) => {
+  const dm = req.app.get('deviceManager');
+  try {
+    await dm.sendCommand(req.params.id, '/restart');
+    res.json({ ok: true, action: 'restarting' });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
 // POST /api/devices/:id/morse - Send morse code to device (lamp only)
 router.post('/devices/:id/morse', async (req, res) => {
   const dm = req.app.get('deviceManager');
@@ -158,6 +186,32 @@ router.post('/devices/all/brightness', async (req, res) => {
   }
 
   res.json({ brightness: value, results });
+});
+
+// POST /api/devices/all/color - Set color on all devices
+router.post('/devices/all/color', async (req, res) => {
+  const dm = req.app.get('deviceManager');
+  const { r, g, b } = req.body;
+
+  if (r === undefined || g === undefined || b === undefined) {
+    return res.status(400).json({ error: 'Missing r, g, b values' });
+  }
+
+  const results = {};
+  for (const device of dm.getAll()) {
+    if (device.online) {
+      try {
+        await dm.sendColor(device.id, r, g, b);
+        results[device.id] = 'ok';
+      } catch (err) {
+        results[device.id] = err.message;
+      }
+    } else {
+      results[device.id] = 'offline';
+    }
+  }
+
+  res.json({ color: { r, g, b }, results });
 });
 
 module.exports = router;

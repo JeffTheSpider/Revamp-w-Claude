@@ -200,12 +200,23 @@ function createDeviceCard(dev) {
     const mode = el('span', 'device-mode');
     mode.textContent = dev.status.modeName || dev.status.mode;
     header.appendChild(mode);
+
+    const restartBtn = el('button', 'restart-btn');
+    restartBtn.textContent = '\u21bb';
+    restartBtn.title = 'Restart device';
+    restartBtn.onclick = (e) => {
+      e.stopPropagation();
+      restartDevice(dev.id, restartBtn);
+    };
+    header.appendChild(restartBtn);
   }
   card.appendChild(header);
 
   if (!dev.online) {
     const msg = el('p', 'offline-msg');
-    msg.textContent = 'Device offline';
+    msg.textContent = dev.lastSeen
+      ? 'Device offline \u2022 last seen ' + formatDate(dev.lastSeen)
+      : 'Device offline \u2022 never connected';
     card.appendChild(msg);
     return card;
   }
@@ -431,7 +442,11 @@ function renderPatternGrid(deviceId, patterns, activeMode) {
 
 // ---- All Devices ----
 
+let allPatternsRendered = false;
 function renderAllPatterns() {
+  if (allPatternsRendered) return; // Static content, render once
+  allPatternsRendered = true;
+
   const grid = document.getElementById('all-patterns');
   while (grid.firstChild) grid.removeChild(grid.firstChild);
 
@@ -442,6 +457,22 @@ function renderAllPatterns() {
     btn.onclick = () => allPattern(id);
     grid.appendChild(btn);
   });
+
+  // Populate "All" color presets
+  const presets = document.getElementById('all-color-presets');
+  if (presets && !presets.hasChildNodes()) {
+    const colors = ['#ff0000', '#ff6600', '#ffcc00', '#00ff00', '#00ffcc', '#0088ff', '#8800ff', '#ff00aa', '#ffffff'];
+    colors.forEach(color => {
+      const swatch = document.createElement('button');
+      swatch.className = 'color-preset';
+      swatch.style.background = color;
+      swatch.onclick = () => {
+        document.getElementById('all-color').value = color;
+        allColor(color);
+      };
+      presets.appendChild(swatch);
+    });
+  }
 }
 
 // ---- API Calls ----
@@ -503,6 +534,17 @@ async function stopMorse(deviceId) {
   } catch (_) {}
 }
 
+async function restartDevice(deviceId, btn) {
+  if (btn) { btn.textContent = '...'; btn.disabled = true; }
+  try {
+    await fetch('/api/devices/' + deviceId + '/restart', { method: 'POST' });
+    showToast('Restarting ' + deviceId + '...', 'success');
+  } catch (_) {
+    showToast('Failed to restart', 'error');
+  }
+  if (btn) setTimeout(() => { btn.textContent = '\u21bb'; btn.disabled = false; }, 3000);
+}
+
 async function allPattern(patternId) {
   try {
     await fetch('/api/devices/all/pattern', {
@@ -523,6 +565,19 @@ function allBrightnessVal(value) {
   for (const dev of devices) {
     if (dev.online) setBrightnessVal(dev.id, parseInt(value));
   }
+}
+
+let allColorTimeout = null;
+function allColor(hex) {
+  clearTimeout(allColorTimeout);
+  allColorTimeout = setTimeout(() => {
+    const r = parseInt(hex.substr(1, 2), 16);
+    const g = parseInt(hex.substr(3, 2), 16);
+    const b = parseInt(hex.substr(5, 2), 16);
+    for (const dev of devices) {
+      if (dev.online) sendColor(dev.id, r, g, b);
+    }
+  }, 80);
 }
 
 // ---- Scenes ----

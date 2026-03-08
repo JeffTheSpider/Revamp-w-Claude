@@ -180,13 +180,13 @@
     }
     .morse-input {
       flex: 1; min-width: 120px; padding: 8px 10px; border-radius: 8px;
-      border: 1px solid var(--border); background: var(--bg-main); color: var(--text);
+      border: 1px solid var(--border); background: var(--bg-elevated); color: var(--text);
       font-size: 14px;
     }
     .morse-input::placeholder { color: #555; }
     .morse-wpm {
       padding: 8px 6px; border-radius: 8px; border: 1px solid var(--border);
-      background: var(--bg-main); color: var(--text); font-size: 12px;
+      background: var(--bg-elevated); color: var(--text); font-size: 12px;
     }
     .morse-loop-label {
       font-size: 12px; color: var(--text-dim); white-space: nowrap; cursor: pointer;
@@ -209,7 +209,7 @@
     }
     .morse-preset-btn {
       padding: 5px 12px; border-radius: 6px; border: 1px solid var(--border);
-      background: var(--bg-main); color: var(--text-dim); cursor: pointer;
+      background: var(--bg-elevated); color: var(--text-dim); cursor: pointer;
       font-size: 12px; font-family: monospace; letter-spacing: 1px;
       transition: all 0.15s;
     }
@@ -381,12 +381,34 @@
     .toast.error { border-color: var(--red); color: var(--red); }
     .toast.success { border-color: var(--green); color: var(--green); }
 
+    /* Restart button */
+    .restart-btn {
+      background: rgba(255, 170, 0, 0.1); color: var(--yellow);
+      border: 1px solid rgba(255, 170, 0, 0.2); border-radius: 6px;
+      padding: 3px 8px; font-size: 10px; cursor: pointer;
+      transition: all 0.15s; margin-left: 6px;
+    }
+    .restart-btn:hover { background: rgba(255, 170, 0, 0.3); }
+    .restart-btn:active { transform: scale(0.92); }
+
+    /* Smooth slider touch interaction */
+    .br-slider { touch-action: none; }
+
     /* Responsive */
-    @media (max-width: 400px) {
+    @media (max-width: 440px) {
       .pattern-grid { grid-template-columns: repeat(3, 1fr); }
       .device-info { grid-template-columns: 1fr 1fr; }
+      .morse-row { flex-direction: column; }
+      .morse-input { min-width: 100%; }
       .scene-card { flex-direction: column; align-items: stretch; }
       .scene-actions { justify-content: flex-end; }
+      .color-presets { gap: 4px; }
+      .color-preset { width: 28px; height: 28px; }
+    }
+    @media (max-width: 360px) {
+      body { padding: 8px 8px 80px; }
+      .device-card { padding: 12px; }
+      .pat-btn { padding: 8px 2px; font-size: 10px; }
     }
   </style>
 </head>
@@ -406,10 +428,16 @@
     <div class="pattern-grid" id="all-patterns"></div>
     <div class="section-label">Sync Brightness</div>
     <div class="brightness-row">
-      <button class="br-btn" onclick="allBrightness('down')">-</button>
+      <button class="br-btn" onclick="allBrightness('down')">&#x2212;</button>
       <input type="range" class="br-slider" min="1" max="250" value="100"
              oninput="allBrightnessVal(this.value)">
       <button class="br-btn" onclick="allBrightness('up')">+</button>
+    </div>
+    <div class="section-label" style="margin-top:14px">Sync Color</div>
+    <div class="color-row">
+      <input type="color" class="color-input" id="all-color" value="#ff6600"
+             oninput="allColor(this.value)">
+      <div class="color-presets" id="all-color-presets"></div>
     </div>
   </div>
 

@@ -29,6 +29,18 @@ const wss = new WebSocketServer({ server, path: '/ws' });
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Request logging (API calls only, skip static files)
+app.use('/api', (req, res, next) => {
+  const start = Date.now();
+  res.on('finish', () => {
+    const ms = Date.now() - start;
+    if (ms > 1000) {
+      console.log(`[API] ${req.method} ${req.originalUrl} → ${res.statusCode} (${ms}ms SLOW)`);
+    }
+  });
+  next();
+});
+
 // Device manager (discovers and polls ESP devices)
 const deviceManager = new DeviceManager();
 
@@ -42,6 +54,12 @@ app.set('sceneManager', sceneManager);
 // API routes
 app.use('/api', apiRoutes);
 app.use('/api/scenes', sceneRoutes);
+
+// Global API error handler
+app.use('/api', (err, req, res, _next) => {
+  console.error(`[API] Error on ${req.method} ${req.originalUrl}:`, err.message);
+  res.status(500).json({ error: 'Internal server error' });
+});
 
 // SPA fallback - serve index.html for all non-API routes
 app.get('*', (req, res) => {
@@ -70,13 +88,23 @@ wss.on('connection', (ws) => {
   });
 });
 
+// Throttle map for color updates (deviceId -> lastSendTime)
+const colorThrottle = new Map();
+const COLOR_THROTTLE_MS = 50; // Max ~20 color updates/sec per device
+
 // Handle incoming WebSocket messages from clients
 function handleWsMessage(ws, msg) {
   switch (msg.type) {
     case 'color_update':
-      // Real-time color update from PWA color picker
+      // Real-time color update from PWA color picker (throttled)
       if (msg.device && msg.r !== undefined) {
-        deviceManager.sendColor(msg.device, msg.r, msg.g, msg.b);
+        const now = Date.now();
+        const lastSend = colorThrottle.get(msg.device) || 0;
+        if (now - lastSend >= COLOR_THROTTLE_MS) {
+          colorThrottle.set(msg.device, now);
+          deviceManager.sendColor(msg.device, msg.r, msg.g, msg.b)
+            .catch(() => {}); // Swallow errors for real-time stream
+        }
       }
       break;
 
@@ -133,11 +161,19 @@ sceneManager.on('scheduledActivation', (name, results) => {
   broadcast({ type: 'scene_activated', name, results, scheduled: true });
 });
 
-// Graceful shutdown: stop cron jobs
-process.on('SIGTERM', () => {
+// Graceful shutdown: stop cron jobs and polling
+function shutdown() {
+  console.log('[Hub] Shutting down...');
   sceneManager.stopAll();
   deviceManager.stop();
   server.close();
+}
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
+
+// Prevent crashes from unhandled promise rejections
+process.on('unhandledRejection', (reason) => {
+  console.error('[Hub] Unhandled rejection:', reason);
 });
 
 // Start server
