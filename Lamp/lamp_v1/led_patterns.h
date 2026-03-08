@@ -215,8 +215,12 @@ void patStrips(int br) {
     RgbColor(0, 0, br),      // Strip 3: Blue
     RgbColor(br, br, 0)      // Strip 4: Yellow
   };
+  const int numColors = sizeof(colors) / sizeof(colors[0]);
   for (int i = 0; i < PIXEL_COUNT; i++) {
-    strip.SetPixelColor(i, colors[i / LEDS_PER_STRIP]);
+    // Clamp index to avoid array overflow if config doesn't match
+    int stripIdx = i / LEDS_PER_STRIP;
+    if (stripIdx >= numColors) stripIdx = numColors - 1;
+    strip.SetPixelColor(i, colors[stripIdx]);
   }
   strip.Show();
 }

@@ -307,7 +307,8 @@ void setupOTA() {
 
   ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
     // No OLED on lamp - just log milestone percentages
-    int pct = progress / (total / 100);
+    // Guard: total can be 0 at start; use multiply-first to avoid integer div-by-zero
+    int pct = (total > 0) ? (int)((uint32_t)progress * 100 / total) : 0;
     if (pct % 25 == 0) {
       logInfo("OTA: " + String(pct) + "%");
     }
@@ -485,6 +486,9 @@ void handleDashboard() {
 // ============================================================
 void handleApiStatus() {
   unsigned long uptime = (millis() - bootTime) / 1000;
+  // Store IP string before snprintf to avoid dangling pointer
+  // (WiFi.localIP().toString() returns a temporary String)
+  String ipStr = WiFi.localIP().toString();
   char json[400];
   snprintf(json, sizeof(json),
     "{\"device\":\"lamp\","
@@ -509,7 +513,7 @@ void handleApiStatus() {
     ESP.getFreeHeap(),
     WiFi.status() == WL_CONNECTED ? "true" : "false",
     WiFi.RSSI(),
-    WiFi.localIP().toString().c_str(),
+    ipStr.c_str(),
     MODE_IDS[currentMode],
     MODE_LABELS[currentMode],
     Brightness,
@@ -593,6 +597,24 @@ void handleApiBrightness() {
 }
 
 // ============================================================
+// Web Server - Set Color (POST /api/color?r=X&g=X&b=X)
+// ============================================================
+// Shorthand for color mode + custom RGB (used by Hub color picker)
+void handleApiColor() {
+  if (safeMode) {
+    server.send(200, "application/json", "{\"ok\":false,\"reason\":\"safe mode\"}");
+    return;
+  }
+
+  uint8_t r = server.hasArg("r") ? (uint8_t)server.arg("r").toInt() : 0;
+  uint8_t g = server.hasArg("g") ? (uint8_t)server.arg("g").toInt() : 0;
+  uint8_t b = server.hasArg("b") ? (uint8_t)server.arg("b").toInt() : 0;
+  setCustomColor(r, g, b);
+  setMode(MODE_COLOR);
+  server.send(200, "application/json", "{\"ok\":true}");
+}
+
+// ============================================================
 // Web Server - LED Test (GET /led?test=1)
 // ============================================================
 void handleLed() {
@@ -670,7 +692,8 @@ void handleApiWifiScan() {
     String safeSsid = WiFi.SSID(i);
     safeSsid.replace("\\", "\\\\");
     safeSsid.replace("\"", "\\\"");
-    char entry[100];
+    // Buffer: 64 chars for escaped SSID + ~40 chars JSON overhead = ~104 max
+    char entry[160];
     snprintf(entry, sizeof(entry), "{\"ssid\":\"%s\",\"rssi\":%d,\"enc\":%s}",
              safeSsid.c_str(), WiFi.RSSI(i),
              WiFi.encryptionType(i) != ENC_TYPE_NONE ? "true" : "false");
@@ -856,9 +879,10 @@ void setup() {
   startSoftAP();
   bool wifiOk = connectWiFi();
 
-  // mDNS
+  // mDNS with HTTP service advertisement (for Hub auto-discovery)
   if (wifiOk) {
     MDNS.begin(HOSTNAME);
+    MDNS.addService("http", "tcp", 80);
     logInfo("mDNS: " + String(HOSTNAME) + ".local");
   }
 
@@ -886,6 +910,7 @@ void setup() {
   server.on("/api/patterns", handleApiPatterns);
   server.on("/api/pattern", handleApiPattern);
   server.on("/api/brightness", handleApiBrightness);
+  server.on("/api/color", handleApiColor);
   server.on("/log", handleLog);
   server.on("/led", handleLed);
   server.on("/wifi", handleWifiPage);
@@ -929,6 +954,18 @@ void loop() {
   // Stability check (clear crash counter after 30s)
   if (!stabilityConfirmed && (millis() - lastStableTime > 30000)) {
     crashCounterClear();
+  }
+
+  // WiFi reconnect (check every 30s, reconnect if disconnected)
+  // Skip if WL_IDLE_STATUS (connection attempt already in progress)
+  static unsigned long lastWifiCheck = 0;
+  if (millis() - lastWifiCheck > 30000) {
+    lastWifiCheck = millis();
+    wl_status_t wifiStatus = WiFi.status();
+    if (wifiStatus != WL_CONNECTED && wifiStatus != WL_IDLE_STATUS && ssid.length() > 0) {
+      logWarn("WiFi disconnected, reconnecting...");
+      WiFi.begin(ssid.c_str(), password.c_str());
+    }
   }
 
   // Periodic status log (every 5 minutes)
