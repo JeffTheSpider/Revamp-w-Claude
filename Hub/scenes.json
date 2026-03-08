@@ -1,0 +1,42 @@
+{
+  "scenes": {
+    "clock-mode": {
+      "description": "Clock face at brightness 30",
+      "devices": {
+        "mirror": {
+          "mode": "clock",
+          "brightness": 30,
+          "color": {
+            "r": 0,
+            "g": 128,
+            "b": 255
+          }
+        }
+      },
+      "createdAt": "2026-03-08T10:45:59.399Z"
+    },
+    "cozy-candle": {
+      "description": "Warm candlelight flicker",
+      "devices": {
+        "mirror": {
+          "mode": "candle",
+          "brightness": 30,
+          "color": {
+            "r": 0,
+            "g": 128,
+            "b": 255
+          }
+        }
+      },
+      "createdAt": "2026-03-08T10:47:03.436Z"
+    }
+  },
+  "schedules": {
+    "clock-mode": {
+      "cron": "0 7 * * *",
+      "enabled": true,
+      "description": "Morning clock face",
+      "createdAt": "2026-03-08T10:52:09.086Z"
+    }
+  }
+}

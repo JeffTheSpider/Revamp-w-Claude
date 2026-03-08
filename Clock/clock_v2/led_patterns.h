@@ -64,6 +64,7 @@ enum LedMode : uint8_t {
   MODE_CANDLE,     // Fire/candle flicker
   MODE_WAVE,       // Blue-cyan wave
   MODE_SPARKLE,    // White sparkle with fade
+  MODE_COLOR,      // Custom RGB color (set via API)
   MODE_OFF,
   MODE_COUNT
 };
@@ -72,14 +73,14 @@ enum LedMode : uint8_t {
 const char* const MODE_IDS[] = {
   "clock", "red", "green", "blue", "white",
   "special1", "special2", "special3",
-  "rainbow", "candle", "wave", "sparkle", "off"
+  "rainbow", "candle", "wave", "sparkle", "color", "off"
 };
 
 // Human-readable labels (for UI)
 const char* const MODE_LABELS[] = {
   "Clock", "Red", "Green", "Blue", "White",
   "Blue Flash", "Multicolor", "Sweep",
-  "Rainbow", "Candle", "Color Wave", "Sparkle", "Off"
+  "Rainbow", "Candle", "Color Wave", "Sparkle", "Custom", "Off"
 };
 
 LedMode currentMode = MODE_CLOCK;
@@ -109,6 +110,13 @@ int prevH = -1, prevM = -1, prevS = -1;  // Clock face tracking
 unsigned long lastPat = 0;                 // Throttle timer
 uint16_t patStep = 0;                      // Animation frame counter
 uint8_t sweepVal = 0;                      // Special3 brightness ramp
+uint8_t customR = 255, customG = 100, customB = 50;  // Custom color (set via API)
+
+// Set custom color and switch to color mode
+void setCustomColor(uint8_t r, uint8_t g, uint8_t b) {
+  customR = r; customG = g; customB = b;
+  modeChanged = true;  // Force redraw
+}
 
 // ============================================================
 // Pattern: Clock Face
@@ -311,6 +319,7 @@ void tickPatterns(int br) {
     case MODE_CANDLE:   patCandle(br); break;
     case MODE_WAVE:     patWave(br); break;
     case MODE_SPARKLE:  patSparkle(br); break;
+    case MODE_COLOR:    patSolid(RgbColor(customR, customG, customB)); break;
     case MODE_OFF:      break;
     case MODE_COUNT:    break;  // Sentinel, not a real mode
   }

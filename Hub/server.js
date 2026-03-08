@@ -13,7 +13,9 @@ const http = require('http');
 const { WebSocketServer } = require('ws');
 const path = require('path');
 const DeviceManager = require('./src/services/device-manager');
+const SceneManager = require('./src/services/scene-manager');
 const apiRoutes = require('./src/api/routes');
+const sceneRoutes = require('./src/api/scenes');
 
 const PORT = process.env.PORT || 3000;
 
@@ -30,11 +32,16 @@ app.use(express.static(path.join(__dirname, 'public')));
 // Device manager (discovers and polls ESP devices)
 const deviceManager = new DeviceManager();
 
-// Make device manager available to routes
+// Scene manager (save/load device state snapshots)
+const sceneManager = new SceneManager(deviceManager);
+
+// Make managers available to routes
 app.set('deviceManager', deviceManager);
+app.set('sceneManager', sceneManager);
 
 // API routes
 app.use('/api', apiRoutes);
+app.use('/api/scenes', sceneRoutes);
 
 // SPA fallback - serve index.html for all non-API routes
 app.get('*', (req, res) => {
@@ -77,6 +84,20 @@ function handleWsMessage(ws, msg) {
       ws.send(JSON.stringify({ type: 'devices', data: deviceManager.getAll() }));
       break;
 
+    case 'get_scenes':
+      ws.send(JSON.stringify({ type: 'scenes', data: sceneManager.list() }));
+      break;
+
+    case 'activate_scene':
+      if (msg.name) {
+        sceneManager.activate(msg.name).then(results => {
+          ws.send(JSON.stringify({ type: 'scene_activated', name: msg.name, results }));
+        }).catch(err => {
+          ws.send(JSON.stringify({ type: 'error', message: err.message }));
+        });
+      }
+      break;
+
     default:
       console.log('[WS] Unknown message type:', msg.type);
   }
@@ -106,6 +127,18 @@ function broadcast(msg) {
     if (client.readyState === 1) client.send(data);
   });
 }
+
+// Broadcast scheduled scene activations to all clients
+sceneManager.on('scheduledActivation', (name, results) => {
+  broadcast({ type: 'scene_activated', name, results, scheduled: true });
+});
+
+// Graceful shutdown: stop cron jobs
+process.on('SIGTERM', () => {
+  sceneManager.stopAll();
+  deviceManager.stop();
+  server.close();
+});
 
 // Start server
 server.listen(PORT, () => {

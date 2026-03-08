@@ -577,7 +577,7 @@ void handleDashboard() {
 // ============================================================
 void handleApiStatus() {
   unsigned long uptime = (millis() - bootTime) / 1000;
-  char json[400];
+  char json[450];
   snprintf(json, sizeof(json),
     "{\"device\":\"mirror\","
     "\"version\":\"%s\","
@@ -590,6 +590,7 @@ void handleApiStatus() {
     "\"mode\":\"%s\","
     "\"modeName\":\"%s\","
     "\"brightness\":%d,"
+    "\"color\":{\"r\":%d,\"g\":%d,\"b\":%d},"
     "\"neopixel\":\"DMA_GPIO3\","
     "\"oled\":\"I2C_GPIO0_GPIO2\","
     "\"ntpValid\":%s,"
@@ -604,6 +605,7 @@ void handleApiStatus() {
     MODE_IDS[currentMode],
     MODE_LABELS[currentMode],
     Brightness,
+    customR, customG, customB,
     isTimeValid() ? "true" : "false",
     stabilityConfirmed ? "true" : "false");
   server.send(200, "application/json", json);
@@ -613,8 +615,8 @@ void handleApiStatus() {
 // Web Server - Pattern List (GET /api/patterns)
 // ============================================================
 void handleApiPatterns() {
-  // 13 modes * ~40 chars each + brackets = ~530 chars max
-  char json[600];
+  // 14 modes * ~40 chars each + brackets = ~570 chars max
+  char json[640];
   int pos = 0;
   json[pos++] = '[';
   for (int i = 0; i < MODE_COUNT; i++) {
@@ -639,12 +641,27 @@ void handleApiPattern() {
   if (server.hasArg("id")) {
     String id = server.arg("id");
     LedMode newMode = modeFromId(id);
+
+    // Custom color: accept r, g, b query params
+    if (newMode == MODE_COLOR && server.hasArg("r")) {
+      uint8_t r = (uint8_t)server.arg("r").toInt();
+      uint8_t g = server.hasArg("g") ? (uint8_t)server.arg("g").toInt() : 0;
+      uint8_t b = server.hasArg("b") ? (uint8_t)server.arg("b").toInt() : 0;
+      setCustomColor(r, g, b);
+    }
+
     setMode(newMode);
     markEepromDirty();
   }
 
-  server.sendHeader("Location", "/");
-  server.send(302, "text/plain", "");
+  // Return JSON for API callers, redirect for browser
+  if (server.hasHeader("Accept") &&
+      server.header("Accept").indexOf("json") >= 0) {
+    server.send(200, "application/json", "{\"ok\":true}");
+  } else {
+    server.sendHeader("Location", "/");
+    server.send(302, "text/plain", "");
+  }
 }
 
 // ============================================================

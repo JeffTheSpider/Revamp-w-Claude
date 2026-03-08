@@ -190,10 +190,161 @@
       color: var(--red); font-size: 12px; text-align: center; padding: 8px;
     }
 
+    /* Scenes Section */
+    .scenes-section {
+      background: var(--bg-card); border-radius: var(--radius);
+      padding: 16px; border: 1px solid var(--border);
+      max-width: 520px; margin: 16px auto;
+    }
+    .scenes-header {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: 12px;
+    }
+    .scenes-header h2 {
+      color: var(--accent); font-size: 13px;
+      text-transform: uppercase; letter-spacing: 1px;
+    }
+    .save-scene-btn {
+      background: rgba(0, 212, 255, 0.15); color: var(--accent);
+      border: 1px solid var(--accent); border-radius: 8px;
+      padding: 6px 14px; font-size: 12px; font-weight: 600;
+      cursor: pointer; transition: all 0.15s;
+    }
+    .save-scene-btn:hover { background: rgba(0, 212, 255, 0.3); }
+    .save-scene-btn:active { transform: scale(0.96); }
+    .scene-list {
+      display: flex; flex-direction: column; gap: 8px;
+    }
+    .scene-empty {
+      color: var(--text-dim); font-size: 12px; text-align: center;
+      padding: 16px 0;
+    }
+    .scene-card {
+      background: var(--bg-elevated); border-radius: 8px;
+      padding: 12px; display: flex; justify-content: space-between;
+      align-items: center; gap: 10px; transition: all 0.15s;
+    }
+    .scene-card:hover {
+      background: rgba(26, 26, 54, 0.8);
+      box-shadow: 0 0 10px rgba(0, 212, 255, 0.05);
+    }
+    .scene-info { flex: 1; min-width: 0; }
+    .scene-name {
+      font-size: 14px; font-weight: 600; color: var(--text);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .scene-meta {
+      font-size: 11px; color: var(--text-dim); margin-top: 2px;
+    }
+    .scene-actions { display: flex; gap: 6px; flex-shrink: 0; }
+    .scene-activate-btn {
+      background: rgba(0, 255, 136, 0.15); color: var(--green);
+      border: 1px solid rgba(0, 255, 136, 0.3); border-radius: 6px;
+      padding: 5px 12px; font-size: 11px; font-weight: 600;
+      cursor: pointer; transition: all 0.15s;
+    }
+    .scene-activate-btn:hover { background: rgba(0, 255, 136, 0.3); }
+    .scene-activate-btn:active { transform: scale(0.96); }
+    .scene-activate-btn.activating {
+      opacity: 0.5; pointer-events: none;
+    }
+    .scene-delete-btn {
+      background: rgba(255, 68, 85, 0.1); color: var(--red);
+      border: 1px solid rgba(255, 68, 85, 0.2); border-radius: 6px;
+      padding: 5px 10px; font-size: 11px; cursor: pointer;
+      transition: all 0.15s;
+    }
+    .scene-delete-btn:hover { background: rgba(255, 68, 85, 0.25); }
+    .scene-schedule {
+      font-size: 10px; color: var(--yellow); margin-top: 3px;
+      display: flex; align-items: center; gap: 4px;
+    }
+    .scene-schedule.disabled { color: var(--text-dim); }
+    .scene-schedule-btn {
+      background: rgba(255, 170, 0, 0.1); color: var(--yellow);
+      border: 1px solid rgba(255, 170, 0, 0.2); border-radius: 6px;
+      padding: 5px 10px; font-size: 11px; cursor: pointer;
+      transition: all 0.15s;
+    }
+    .scene-schedule-btn:hover { background: rgba(255, 170, 0, 0.25); }
+    .scene-schedule-btn.has-schedule {
+      background: rgba(255, 170, 0, 0.15); border-color: rgba(255, 170, 0, 0.4);
+    }
+
+    /* Save Scene Modal */
+    .modal-overlay {
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0, 0, 0, 0.7); z-index: 100;
+      display: flex; align-items: center; justify-content: center;
+      padding: 20px; opacity: 0; pointer-events: none;
+      transition: opacity 0.2s;
+    }
+    .modal-overlay.open { opacity: 1; pointer-events: all; }
+    .modal {
+      background: var(--bg-card); border-radius: var(--radius);
+      padding: 24px; width: 100%; max-width: 360px;
+      border: 1px solid var(--accent);
+      box-shadow: 0 0 40px rgba(0, 212, 255, 0.1);
+      transform: translateY(10px); transition: transform 0.2s;
+    }
+    .modal-overlay.open .modal { transform: translateY(0); }
+    .modal h3 {
+      color: var(--accent); font-size: 16px; margin-bottom: 16px;
+    }
+    .modal-field {
+      margin-bottom: 12px;
+    }
+    .modal-field label {
+      display: block; font-size: 11px; color: var(--text-dim);
+      text-transform: uppercase; letter-spacing: 0.5px;
+      margin-bottom: 4px;
+    }
+    .modal-field input {
+      width: 100%; background: var(--bg-elevated);
+      border: 1px solid var(--border); border-radius: 8px;
+      padding: 10px 12px; color: var(--text); font-size: 14px;
+      outline: none; transition: border-color 0.2s;
+    }
+    .modal-field input:focus { border-color: var(--accent); }
+    .modal-field input::placeholder { color: var(--text-dim); }
+    .modal-buttons {
+      display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px;
+    }
+    .modal-cancel {
+      background: var(--bg-elevated); color: var(--text-dim);
+      border: 1px solid var(--border); border-radius: 8px;
+      padding: 8px 16px; font-size: 13px; cursor: pointer;
+      transition: all 0.15s;
+    }
+    .modal-cancel:hover { color: var(--text); border-color: var(--text-dim); }
+    .modal-save {
+      background: var(--accent); color: #000;
+      border: none; border-radius: 8px;
+      padding: 8px 20px; font-size: 13px; font-weight: 600;
+      cursor: pointer; transition: all 0.15s;
+    }
+    .modal-save:hover { background: #33ddff; }
+    .modal-save:active { transform: scale(0.96); }
+
+    /* Toast notification */
+    .toast {
+      position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+      background: var(--bg-card); border: 1px solid var(--accent);
+      border-radius: 8px; padding: 10px 20px; font-size: 13px;
+      color: var(--text); box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+      z-index: 200; opacity: 0; transition: opacity 0.3s;
+      pointer-events: none;
+    }
+    .toast.visible { opacity: 1; }
+    .toast.error { border-color: var(--red); color: var(--red); }
+    .toast.success { border-color: var(--green); color: var(--green); }
+
     /* Responsive */
     @media (max-width: 400px) {
       .pattern-grid { grid-template-columns: repeat(3, 1fr); }
       .device-info { grid-template-columns: 1fr 1fr; }
+      .scene-card { flex-direction: column; align-items: stretch; }
+      .scene-actions { justify-content: flex-end; }
     }
   </style>
 </head>
@@ -219,6 +370,71 @@
       <button class="br-btn" onclick="allBrightness('up')">+</button>
     </div>
   </div>
+
+  <div class="scenes-section" id="scenes-section" style="display:none">
+    <div class="scenes-header">
+      <h2>Scenes</h2>
+      <button class="save-scene-btn" onclick="openSaveModal()">+ Save Current</button>
+    </div>
+    <div class="scene-list" id="scene-list">
+      <p class="scene-empty">No saved scenes</p>
+    </div>
+  </div>
+
+  <!-- Save Scene Modal -->
+  <div class="modal-overlay" id="save-modal">
+    <div class="modal">
+      <h3>Save Scene</h3>
+      <div class="modal-field">
+        <label>Name</label>
+        <input type="text" id="scene-name-input" placeholder="e.g. movie-night"
+               pattern="[a-zA-Z0-9_-]+" maxlength="32">
+      </div>
+      <div class="modal-field">
+        <label>Description (optional)</label>
+        <input type="text" id="scene-desc-input" placeholder="e.g. Warm dim lighting"
+               maxlength="100">
+      </div>
+      <div class="modal-buttons">
+        <button class="modal-cancel" onclick="closeSaveModal()">Cancel</button>
+        <button class="modal-save" onclick="saveScene()">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Schedule Scene Modal -->
+  <div class="modal-overlay" id="schedule-modal">
+    <div class="modal">
+      <h3>Schedule Scene</h3>
+      <div id="schedule-scene-name" style="color:var(--text);font-size:14px;margin-bottom:12px"></div>
+      <div class="modal-field">
+        <label>Cron Expression</label>
+        <input type="text" id="schedule-cron-input" placeholder="e.g. 0 7 * * * (7 AM daily)">
+      </div>
+      <div class="modal-field">
+        <label>Quick Presets</label>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">
+          <button class="pat-btn" style="padding:6px 10px;font-size:10px" onclick="setCronPreset('0 7 * * *')">7 AM Daily</button>
+          <button class="pat-btn" style="padding:6px 10px;font-size:10px" onclick="setCronPreset('0 22 * * *')">10 PM Daily</button>
+          <button class="pat-btn" style="padding:6px 10px;font-size:10px" onclick="setCronPreset('0 7 * * 1-5')">Weekdays 7 AM</button>
+          <button class="pat-btn" style="padding:6px 10px;font-size:10px" onclick="setCronPreset('0 9 * * 0,6')">Weekends 9 AM</button>
+          <button class="pat-btn" style="padding:6px 10px;font-size:10px" onclick="setCronPreset('30 6 * * *')">Sunrise 6:30 AM</button>
+          <button class="pat-btn" style="padding:6px 10px;font-size:10px" onclick="setCronPreset('*/30 * * * *')">Every 30 min</button>
+        </div>
+      </div>
+      <div class="modal-field">
+        <label>Description (optional)</label>
+        <input type="text" id="schedule-desc-input" placeholder="e.g. Sunrise alarm">
+      </div>
+      <div class="modal-buttons">
+        <button class="modal-cancel" onclick="closeScheduleModal()">Cancel</button>
+        <button class="modal-save" onclick="saveSchedule()">Set Schedule</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast notification -->
+  <div class="toast" id="toast"></div>
 
   <script src="/js/app.js"></script>
   <script>

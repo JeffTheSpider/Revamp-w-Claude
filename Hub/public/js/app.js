@@ -8,6 +8,7 @@
 
 let ws = null;
 let devices = [];
+let scenes = [];
 let reconnectTimer = null;
 let patternCache = {}; // deviceId -> [patterns]
 
@@ -41,6 +42,7 @@ function handleMessage(msg) {
     case 'devices':
       devices = msg.data;
       renderDevices();
+      fetchScenes(); // Refresh scenes when device list updates
       break;
     case 'device_status':
       updateDevice(msg.id, msg.data);
@@ -50,6 +52,20 @@ function handleMessage(msg) {
       if (ws && ws.readyState === 1) {
         ws.send(JSON.stringify({ type: 'get_devices' }));
       }
+      break;
+    case 'scenes':
+      scenes = msg.data;
+      renderScenes();
+      break;
+    case 'scene_activated':
+      showToast('Scene "' + msg.name + '" activated', 'success');
+      // Refresh device states after scene activation
+      if (ws && ws.readyState === 1) {
+        ws.send(JSON.stringify({ type: 'get_devices' }));
+      }
+      break;
+    case 'error':
+      showToast(msg.message || 'An error occurred', 'error');
       break;
   }
 }
@@ -319,6 +335,304 @@ function allBrightnessVal(value) {
   }
 }
 
+// ---- Scenes ----
+
+async function fetchScenes() {
+  try {
+    const res = await fetch('/api/scenes');
+    if (!res.ok) return;
+    scenes = await res.json();
+    renderScenes();
+  } catch (_) {}
+}
+
+function renderScenes() {
+  const section = document.getElementById('scenes-section');
+  const list = document.getElementById('scene-list');
+  while (list.firstChild) list.removeChild(list.firstChild);
+
+  // Show scenes section if any devices are online
+  const hasOnline = devices.some(d => d.online);
+  section.style.display = hasOnline ? '' : 'none';
+
+  if (scenes.length === 0) {
+    const empty = el('p', 'scene-empty');
+    empty.textContent = 'No saved scenes \u2013 save current device states to create one';
+    list.appendChild(empty);
+    return;
+  }
+
+  scenes.forEach(scene => list.appendChild(createSceneCard(scene)));
+}
+
+function createSceneCard(scene) {
+  const card = el('div', 'scene-card');
+
+  // Info section
+  const info = el('div', 'scene-info');
+  const name = el('div', 'scene-name');
+  name.textContent = scene.name;
+  info.appendChild(name);
+
+  const meta = el('div', 'scene-meta');
+  const parts = [];
+  if (scene.description) parts.push(scene.description);
+  parts.push(scene.deviceCount + ' device' + (scene.deviceCount !== 1 ? 's' : ''));
+  if (scene.createdAt) parts.push(formatDate(scene.createdAt));
+  meta.textContent = parts.join(' \u00b7 ');
+  info.appendChild(meta);
+
+  // Schedule indicator
+  if (scene.schedule) {
+    const schedEl = el('div', 'scene-schedule' + (scene.schedule.enabled ? '' : ' disabled'));
+    schedEl.textContent = '\u23f0 ' + cronToHuman(scene.schedule.cron) +
+      (scene.schedule.enabled ? '' : ' (paused)');
+    info.appendChild(schedEl);
+  }
+
+  card.appendChild(info);
+
+  // Action buttons
+  const actions = el('div', 'scene-actions');
+
+  const schedBtn = el('button', 'scene-schedule-btn' + (scene.schedule ? ' has-schedule' : ''));
+  schedBtn.textContent = scene.schedule ? '\u23f0' : '\u23f0';
+  schedBtn.title = scene.schedule ? 'Edit schedule' : 'Add schedule';
+  schedBtn.onclick = () => openScheduleModal(scene.name, scene.schedule);
+  actions.appendChild(schedBtn);
+
+  const activateBtn = el('button', 'scene-activate-btn');
+  activateBtn.textContent = '\u25b6 Activate';
+  activateBtn.onclick = () => activateScene(scene.name, activateBtn);
+  actions.appendChild(activateBtn);
+
+  const deleteBtn = el('button', 'scene-delete-btn');
+  deleteBtn.textContent = '\u2715';
+  deleteBtn.title = 'Delete scene';
+  deleteBtn.onclick = () => deleteScene(scene.name);
+  actions.appendChild(deleteBtn);
+
+  card.appendChild(actions);
+  return card;
+}
+
+async function activateScene(name, btn) {
+  if (btn) btn.classList.add('activating');
+  try {
+    const res = await fetch('/api/scenes/' + encodeURIComponent(name) + '/activate', {
+      method: 'POST'
+    });
+    if (!res.ok) {
+      const data = await res.json();
+      showToast(data.error || 'Failed to activate', 'error');
+    }
+    // Success toast comes via WebSocket
+  } catch (err) {
+    showToast('Network error', 'error');
+  } finally {
+    if (btn) setTimeout(() => btn.classList.remove('activating'), 500);
+  }
+}
+
+async function deleteScene(name) {
+  try {
+    const res = await fetch('/api/scenes/' + encodeURIComponent(name), {
+      method: 'DELETE'
+    });
+    if (res.ok) {
+      showToast('Scene "' + name + '" deleted', 'success');
+      fetchScenes();
+    } else {
+      showToast('Failed to delete scene', 'error');
+    }
+  } catch (_) {
+    showToast('Network error', 'error');
+  }
+}
+
+// ---- Save Modal ----
+
+function openSaveModal() {
+  document.getElementById('scene-name-input').value = '';
+  document.getElementById('scene-desc-input').value = '';
+  document.getElementById('save-modal').classList.add('open');
+  setTimeout(() => document.getElementById('scene-name-input').focus(), 100);
+}
+
+function closeSaveModal() {
+  document.getElementById('save-modal').classList.remove('open');
+}
+
+async function saveScene() {
+  const nameInput = document.getElementById('scene-name-input');
+  const descInput = document.getElementById('scene-desc-input');
+  const name = nameInput.value.trim();
+  const description = descInput.value.trim();
+
+  if (!name) {
+    nameInput.style.borderColor = '#ff4455';
+    setTimeout(() => { nameInput.style.borderColor = ''; }, 1500);
+    return;
+  }
+
+  if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
+    showToast('Name: letters, numbers, dashes, underscores only', 'error');
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/scenes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, description })
+    });
+    const data = await res.json();
+    if (res.ok) {
+      closeSaveModal();
+      showToast('Scene "' + name + '" saved', 'success');
+      fetchScenes();
+    } else {
+      showToast(data.error || 'Failed to save', 'error');
+    }
+  } catch (_) {
+    showToast('Network error', 'error');
+  }
+}
+
+// Close modal on overlay click or Escape
+document.getElementById('save-modal').addEventListener('click', (e) => {
+  if (e.target.classList.contains('modal-overlay')) closeSaveModal();
+});
+document.getElementById('schedule-modal').addEventListener('click', (e) => {
+  if (e.target.classList.contains('modal-overlay')) closeScheduleModal();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { closeSaveModal(); closeScheduleModal(); }
+  if (e.key === 'Enter') {
+    if (document.getElementById('save-modal').classList.contains('open')) saveScene();
+    if (document.getElementById('schedule-modal').classList.contains('open')) saveSchedule();
+  }
+});
+
+// ---- Schedule Modal ----
+
+let scheduleTarget = null; // Scene name being scheduled
+
+function openScheduleModal(sceneName, existingSchedule) {
+  scheduleTarget = sceneName;
+  document.getElementById('schedule-scene-name').textContent = 'Scene: ' + sceneName;
+  const cronInput = document.getElementById('schedule-cron-input');
+  const descInput = document.getElementById('schedule-desc-input');
+
+  if (existingSchedule) {
+    cronInput.value = existingSchedule.cron;
+    descInput.value = existingSchedule.description || '';
+  } else {
+    cronInput.value = '';
+    descInput.value = '';
+  }
+
+  document.getElementById('schedule-modal').classList.add('open');
+  setTimeout(() => cronInput.focus(), 100);
+}
+
+function closeScheduleModal() {
+  document.getElementById('schedule-modal').classList.remove('open');
+  scheduleTarget = null;
+}
+
+function setCronPreset(cron) {
+  document.getElementById('schedule-cron-input').value = cron;
+}
+
+async function saveSchedule() {
+  if (!scheduleTarget) return;
+  const cronExpr = document.getElementById('schedule-cron-input').value.trim();
+  const description = document.getElementById('schedule-desc-input').value.trim();
+
+  if (!cronExpr) {
+    // If empty, remove existing schedule
+    try {
+      await fetch('/api/scenes/' + encodeURIComponent(scheduleTarget) + '/schedule', {
+        method: 'DELETE'
+      });
+      showToast('Schedule removed', 'success');
+      closeScheduleModal();
+      fetchScenes();
+    } catch (_) {
+      showToast('Failed to remove schedule', 'error');
+    }
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/scenes/' + encodeURIComponent(scheduleTarget) + '/schedule', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cron: cronExpr, description })
+    });
+    const data = await res.json();
+    if (res.ok) {
+      closeScheduleModal();
+      showToast('Schedule set: ' + cronToHuman(cronExpr), 'success');
+      fetchScenes();
+    } else {
+      showToast(data.error || 'Invalid schedule', 'error');
+    }
+  } catch (_) {
+    showToast('Network error', 'error');
+  }
+}
+
+// Convert cron expression to human-readable string
+function cronToHuman(expr) {
+  if (!expr) return '';
+  const parts = expr.split(' ');
+  if (parts.length !== 5) return expr;
+  const [min, hour, dom, mon, dow] = parts;
+
+  let time = '';
+  if (hour !== '*' && min !== '*') {
+    const h = parseInt(hour);
+    const m = parseInt(min);
+    const ampm = h >= 12 ? 'PM' : 'AM';
+    const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+    time = h12 + ':' + String(m).padStart(2, '0') + ' ' + ampm;
+  }
+
+  let days = '';
+  if (dow === '*' && dom === '*') {
+    days = 'daily';
+  } else if (dow === '1-5') {
+    days = 'weekdays';
+  } else if (dow === '0,6') {
+    days = 'weekends';
+  } else if (dow !== '*') {
+    const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    days = dow.split(',').map(d => dayNames[parseInt(d)] || d).join(', ');
+  }
+
+  if (min.startsWith('*/')) {
+    return 'every ' + min.substring(2) + ' min';
+  }
+  if (hour.startsWith('*/')) {
+    return 'every ' + hour.substring(2) + ' hours';
+  }
+
+  return [time, days].filter(Boolean).join(' ');
+}
+
+// ---- Toast Notifications ----
+
+let toastTimer = null;
+function showToast(message, type) {
+  const toast = document.getElementById('toast');
+  toast.textContent = message;
+  toast.className = 'toast ' + (type || '') + ' visible';
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { toast.classList.remove('visible'); }, 2500);
+}
+
 // ---- Helpers ----
 
 function el(tag, className) {
@@ -350,6 +664,19 @@ function formatBytes(bytes) {
   if (bytes > 1048576) return (bytes / 1048576).toFixed(1) + ' MB';
   if (bytes > 1024) return (bytes / 1024).toFixed(1) + ' KB';
   return bytes + ' B';
+}
+
+function formatDate(iso) {
+  try {
+    const d = new Date(iso);
+    const now = new Date();
+    const diff = now - d;
+    if (diff < 60000) return 'just now';
+    if (diff < 3600000) return Math.floor(diff / 60000) + 'm ago';
+    if (diff < 86400000) return Math.floor(diff / 3600000) + 'h ago';
+    if (diff < 604800000) return Math.floor(diff / 86400000) + 'd ago';
+    return d.toLocaleDateString();
+  } catch (_) { return ''; }
 }
 
 // ---- Start ----
