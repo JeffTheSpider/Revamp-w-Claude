@@ -15,18 +15,20 @@ Three subsystems: Clock (ESP8266), Lamp (ESP8266), and Hub (Node.js) forming a u
 - **Libraries**: NeoPixelBus (DMA), ESP8266 SSD1306 (ThingPulse), TelnetStream, NTPClient, TimeLib, Timezone
 - **Original code**: `Clock/Original Code/clock_original.ino` (reference only)
 
-### Lamp ("Charlie's Lamp") - FIRMWARE COMPLETE (v1.0.0)
+### Lamp ("Charlie's Lamp") - FIRMWARE COMPLETE (v1.0.0 + morse)
 - **Hardware**: ESP8266EX (NodeMCU), 24x WS2812B (4 strips x 6 LEDs), embedded under resin
-- **Firmware**: `Lamp/lamp_v1/` - OTA, safe mode, watchdog, telnet, 12 LED patterns, web dashboard
+- **Firmware**: `Lamp/lamp_v1/` - OTA, safe mode, watchdog, telnet, 12 LED patterns, morse code, web dashboard
 - **Wiring**: GPIO3=NeoPixel DMA (same as clock), GPIO0=FLASH button
 - **Network**: Static IP 192.168.0.202, mDNS lamp.local, SoftAP fallback
 - **Libraries**: NeoPixelBus (DMA), TelnetStream
 - **Serial**: DISABLED (DMA conflicts with GPIO3/RX) - use Telnet instead
+- **Morse**: `morse.h` - non-blocking state machine, ITU timing, A-Z/0-9, adjustable WPM
 
-### Hub - FUNCTIONAL (Phase 6c)
+### Hub - FUNCTIONAL (Phase 6c + morse UI)
 - **Stack**: Node.js + Express + WebSocket
 - **Location**: `Hub/`
-- **Features**: Device discovery, REST proxy, PWA control panel, scenes + scheduling
+- **Features**: Device discovery, REST proxy, PWA control panel, scenes + scheduling, morse code UI
+- **Service Worker**: Network-first strategy (v3), bump version when changing JS/HTML
 - **Run**: `cd Hub && npm start` (port 3000)
 
 ## Development Environment

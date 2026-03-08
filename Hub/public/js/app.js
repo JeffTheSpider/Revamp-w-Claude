@@ -11,6 +11,18 @@ let devices = [];
 let scenes = [];
 let reconnectTimer = null;
 let patternCache = {}; // deviceId -> [patterns]
+let activeSlider = null; // deviceId of slider being dragged (skip updates)
+let renderPending = false;
+
+// Batch multiple updates into one render per frame
+function scheduleRender() {
+  if (renderPending) return;
+  renderPending = true;
+  requestAnimationFrame(() => {
+    renderPending = false;
+    renderDevices();
+  });
+}
 
 // ---- WebSocket ----
 
@@ -41,7 +53,7 @@ function handleMessage(msg) {
   switch (msg.type) {
     case 'devices':
       devices = msg.data;
-      renderDevices();
+      scheduleRender();
       fetchScenes(); // Refresh scenes when device list updates
       break;
     case 'device_status':
@@ -72,24 +84,53 @@ function handleMessage(msg) {
 
 function updateDevice(id, data) {
   const idx = devices.findIndex(d => d.id === id);
-  if (idx >= 0) { devices[idx] = data; renderDevices(); }
+  if (idx >= 0) { devices[idx] = data; scheduleRender(); }
 }
 
 // ---- Rendering ----
 
 function renderDevices() {
   const container = document.getElementById('devices');
-  while (container.firstChild) container.removeChild(container.firstChild);
 
   if (devices.length === 0) {
+    while (container.firstChild) container.removeChild(container.firstChild);
     const p = document.createElement('p');
     p.style.cssText = 'text-align:center;color:#777;font-size:13px';
     p.textContent = 'No devices found';
     container.appendChild(p);
+    document.getElementById('all-section').style.display = 'none';
     return;
   }
 
-  devices.forEach(dev => container.appendChild(createDeviceCard(dev)));
+  // Remove "no devices" placeholder if present
+  const placeholder = container.querySelector('p');
+  if (placeholder) container.removeChild(placeholder);
+
+  // Build set of current device IDs
+  const currentIds = new Set(devices.map(d => d.id));
+
+  // Remove cards for devices that no longer exist
+  container.querySelectorAll('.device-card[data-device-id]').forEach(card => {
+    if (!currentIds.has(card.dataset.deviceId)) container.removeChild(card);
+  });
+
+  // Update or create cards for each device
+  devices.forEach(dev => {
+    const existing = container.querySelector('[data-device-id="' + dev.id + '"]');
+    if (existing) {
+      const wasOnline = existing.classList.contains('online');
+      if (wasOnline !== dev.online) {
+        // Online/offline status changed - full card rebuild needed
+        container.replaceChild(createDeviceCard(dev), existing);
+      } else if (dev.online) {
+        // Same status, update values in-place (preserves inputs)
+        updateDeviceCard(existing, dev);
+      }
+    } else {
+      // New device - create card
+      container.appendChild(createDeviceCard(dev));
+    }
+  });
 
   // Show "All Devices" section if any online
   const hasOnline = devices.some(d => d.online);
@@ -97,8 +138,56 @@ function renderDevices() {
   if (hasOnline) renderAllPatterns();
 }
 
+// Update an existing device card in-place without destroying user inputs
+function updateDeviceCard(card, dev) {
+  const s = dev.status;
+  if (!s) return;
+
+  // Update mode badge
+  const mode = card.querySelector('.device-mode');
+  if (mode) mode.textContent = s.modeName || s.mode;
+
+  // Update info values by data attribute
+  updateInfoValue(card, 'IP', s.ip);
+  updateInfoValue(card, 'Heap', formatBytes(s.freeHeap));
+  updateInfoValue(card, 'WiFi', s.rssi + ' dBm');
+  updateInfoValue(card, 'Uptime', formatUptime(s.uptime));
+  updateInfoValue(card, 'Version', 'v' + s.version);
+  updateInfoValue(card, 'NTP', s.ntpValid ? '\u2713 Synced' : 'Pending');
+
+  // Update brightness display (skip if user is dragging this slider)
+  if (activeSlider !== dev.id) {
+    const brSlider = card.querySelector('.br-slider');
+    const brVal = card.querySelector('.br-val');
+    if (brSlider && brVal) {
+      brSlider.value = String(s.brightness);
+      brVal.textContent = String(s.brightness);
+    }
+  }
+
+  // Update pattern active highlight (no re-fetch)
+  if (patternCache[dev.id]) {
+    const buttons = card.querySelectorAll('.pat-btn');
+    const patterns = patternCache[dev.id];
+    buttons.forEach((btn, i) => {
+      if (i < patterns.length) {
+        const isActive = s.mode === patterns[i].id;
+        btn.className = 'pat-btn' + (isActive ? ' active' : '');
+      }
+    });
+  }
+
+  // Morse input, WPM dropdown, loop checkbox, color picker are UNTOUCHED
+}
+
+function updateInfoValue(card, label, value) {
+  const el = card.querySelector('.info-value[data-info-key="' + label + '"]');
+  if (el && el.textContent !== value) el.textContent = value;
+}
+
 function createDeviceCard(dev) {
   const card = el('div', 'device-card ' + (dev.online ? 'online' : 'offline'));
+  card.dataset.deviceId = dev.id;
 
   // Header row
   const header = el('div', 'device-header');
@@ -161,11 +250,18 @@ function createDeviceCard(dev) {
   brSlider.max = '250';
   brSlider.value = String(s.brightness);
   let sliderTimeout = null;
+  // Track when user is actively dragging to prevent server updates overwriting
+  brSlider.addEventListener('mousedown', () => { activeSlider = dev.id; });
+  brSlider.addEventListener('touchstart', () => { activeSlider = dev.id; });
+  brSlider.addEventListener('mouseup', () => { activeSlider = null; });
+  brSlider.addEventListener('touchend', () => { activeSlider = null; });
   brSlider.oninput = () => {
+    activeSlider = dev.id; // Also mark active during drag
     brVal.textContent = brSlider.value;
     clearTimeout(sliderTimeout);
     sliderTimeout = setTimeout(() => {
       setBrightnessVal(dev.id, parseInt(brSlider.value));
+      activeSlider = null;
     }, 150);
   };
 
@@ -306,6 +402,11 @@ function createDeviceCard(dev) {
 // ---- Patterns ----
 
 async function fetchPatterns(dev) {
+  // Use cached patterns if available (avoids re-fetching on every render)
+  if (patternCache[dev.id]) {
+    renderPatternGrid(dev.id, patternCache[dev.id], dev.status ? dev.status.mode : '');
+    return;
+  }
   try {
     const res = await fetch('/api/devices/' + dev.id + '/patterns');
     if (!res.ok) return;
@@ -736,6 +837,7 @@ function addInfoItem(parent, label, value) {
   lbl.textContent = label;
   const val = el('span', 'info-value');
   val.textContent = value;
+  val.dataset.infoKey = label; // For in-place updates
   item.appendChild(lbl);
   item.appendChild(val);
   parent.appendChild(item);
