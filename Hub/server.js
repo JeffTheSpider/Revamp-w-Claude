@@ -18,11 +18,13 @@ const SceneManager = require('./src/services/scene-manager');
 const AudioManager = require('./src/services/audio-manager');
 const CircadianManager = require('./src/services/circadian-manager');
 const NotificationManager = require('./src/services/notification-manager');
+const AnimationManager = require('./src/services/animation-manager');
 const apiRoutes = require('./src/api/routes');
 const sceneRoutes = require('./src/api/scenes');
 const audioRoutes = require('./src/api/audio');
 const circadianRoutes = require('./src/api/circadian');
 const notificationRoutes = require('./src/api/notifications');
+const animationRoutes = require('./src/api/animations');
 
 // Load config
 let hubConfig = {};
@@ -90,12 +92,16 @@ const circadianManager = new CircadianManager(deviceManager);
 // Notification manager (webhooks, profiles, weather)
 const notificationManager = new NotificationManager(deviceManager);
 
+// Animation manager (keyframe animations, upload, playback)
+const animationManager = new AnimationManager(deviceManager);
+
 // Make managers available to routes
 app.set('deviceManager', deviceManager);
 app.set('sceneManager', sceneManager);
 app.set('audioManager', audioManager);
 app.set('circadianManager', circadianManager);
 app.set('notificationManager', notificationManager);
+app.set('animationManager', animationManager);
 
 // API routes
 app.use('/api', apiRoutes);
@@ -103,6 +109,7 @@ app.use('/api/scenes', sceneRoutes);
 app.use('/api/audio', audioRoutes);
 app.use('/api/circadian', circadianRoutes);
 app.use('/api', notificationRoutes);
+app.use('/api', animationRoutes);
 
 // Global API error handler
 app.use('/api', (err, req, res, _next) => {
@@ -125,6 +132,7 @@ wss.on('connection', (ws) => {
   ws.send(JSON.stringify({ type: 'audio_status', data: audioManager.getStatus() }));
   ws.send(JSON.stringify({ type: 'circadian_status', data: circadianManager.getStatus() }));
   ws.send(JSON.stringify({ type: 'notification_status', data: notificationManager.getStatus() }));
+  ws.send(JSON.stringify({ type: 'animation_status', data: animationManager.getStatus() }));
 
   ws.on('message', (raw) => {
     try {
@@ -229,6 +237,20 @@ function handleWsMessage(ws, msg) {
       notificationManager.weatherNotify().catch(() => {});
       break;
 
+    case 'animation_play':
+      if (msg.name) {
+        animationManager.playOnAll(msg.name, { loop: msg.loop })
+          .then(() => broadcast({ type: 'animation_status', data: animationManager.getStatus() }))
+          .catch(() => {});
+      }
+      break;
+
+    case 'animation_stop':
+      animationManager.stopAll(msg.revertMode || 'candle')
+        .then(() => broadcast({ type: 'animation_status', data: animationManager.getStatus() }))
+        .catch(() => {});
+      break;
+
     default:
       console.log('[WS] Unknown message type:', msg.type);
   }
@@ -315,6 +337,20 @@ notificationManager.on('notificationSent', (entry) => {
 });
 notificationManager.on('weatherUpdate', (data) => {
   broadcast({ type: 'weather_update', data });
+});
+
+// Broadcast animation events
+animationManager.on('animationSaved', () => {
+  broadcast({ type: 'animation_status', data: animationManager.getStatus() });
+});
+animationManager.on('animationDeleted', () => {
+  broadcast({ type: 'animation_status', data: animationManager.getStatus() });
+});
+animationManager.on('animationPlaying', (info) => {
+  broadcast({ type: 'animation_playing', data: info });
+});
+animationManager.on('animationStopped', (info) => {
+  broadcast({ type: 'animation_status', data: animationManager.getStatus() });
 });
 
 // Graceful shutdown: stop cron jobs, polling, and audio

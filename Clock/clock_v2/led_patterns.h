@@ -63,6 +63,7 @@ enum LedMode : uint8_t {
   MODE_OCEAN,      // Ambient: deep blue/turquoise waves
   MODE_FOREST,     // Ambient: green with golden sunbeams
   MODE_OFF,
+  MODE_CUSTOM,     // Custom animation (uploaded from Hub)
   MODE_COUNT
 };
 
@@ -72,7 +73,7 @@ const char* const MODE_IDS[] = {
   "special1", "wedge", "special3",
   "rainbow", "candle", "wave", "sparkle", "color",
   "beat_pulse", "spectrum", "beat_chase",
-  "daylight", "sunrise", "fireplace", "ocean", "forest", "off"
+  "daylight", "sunrise", "fireplace", "ocean", "forest", "off", "custom"
 };
 
 // Human-readable labels (for UI)
@@ -81,7 +82,7 @@ const char* const MODE_LABELS[] = {
   "Blue Flash", "Wedge", "Sweep",
   "Rainbow", "Candle", "Color Wave", "Sparkle", "Custom",
   "Beat Pulse", "Spectrum", "Beat Chase",
-  "Daylight", "Sunrise", "Fireplace", "Ocean", "Forest", "Off"
+  "Daylight", "Sunrise", "Fireplace", "Ocean", "Forest", "Off", "Custom Anim"
 };
 
 LedMode currentMode = MODE_CLOCK;
@@ -103,6 +104,9 @@ void setMode(LedMode mode) {
   modeChanged = true;
   logInfo("Mode -> " + String(MODE_LABELS[mode]));
 }
+
+// Forward declaration — animations.h included after this header
+bool animTick(int br);
 
 // ============================================================
 // Pattern State
@@ -321,12 +325,13 @@ void patWedge(int br) {
 // Pattern: Special 3 - Brightness Sweep
 // ============================================================
 // Sweeps all LEDs through blue brightness 0-255, then wraps.
-void patSpecial3() {
+void patSpecial3(int br) {
   unsigned long now = millis();
   if (now - lastPat < 100) return;
   lastPat = now;
+  uint8_t v = (uint16_t)sweepVal * br / 255;
   for (int i = 0; i < PIXEL_COUNT; i++) {
-    setPixel(i, RgbColor(0, 0, sweepVal));
+    setPixel(i, RgbColor(0, 0, v));
   }
   strip.Show();
   sweepVal++;  // uint8_t wraps at 255
@@ -798,7 +803,7 @@ void tickPatterns(int br) {
     case MODE_WHITE:    patSolid(RgbColor(wbr)); break;
     case MODE_SPECIAL1: patSpecial1(br); break;
     case MODE_WEDGE:    patWedge(br); break;
-    case MODE_SPECIAL3: patSpecial3(); break;
+    case MODE_SPECIAL3: patSpecial3(br); break;
     case MODE_RAINBOW:  patRainbow(br); break;
     case MODE_CANDLE:   patCandle(br); break;
     case MODE_WAVE:     patWave(br); break;
@@ -813,6 +818,7 @@ void tickPatterns(int br) {
     case MODE_OCEAN:      patOcean(br); break;
     case MODE_FOREST:     patForest(br); break;
     case MODE_OFF:      break;
+    case MODE_CUSTOM:     animTick(br); break;
     case MODE_COUNT:    break;  // Sentinel, not a real mode
   }
 

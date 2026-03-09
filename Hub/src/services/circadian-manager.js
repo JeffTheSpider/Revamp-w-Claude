@@ -70,14 +70,14 @@ class CircadianManager extends EventEmitter {
 
   // Send current Kelvin to all online devices that have "ambient" capability
   async _sendKelvinToDevices() {
-    const devices = this.dm.getAll();
-    for (const [id, dev] of Object.entries(devices)) {
+    const devices = this.dm.getAll(); // Returns array of device objects
+    for (const dev of devices) {
       if (!dev.online) continue;
       if (!dev.capabilities || !dev.capabilities.includes('ambient')) continue;
       // Only send to devices currently in daylight mode
       if (dev.status && dev.status.mode === 'daylight') {
         try {
-          await this.dm.sendCommand(id, '/api/kelvin', { value: this.currentKelvin });
+          await this.dm.sendCommand(dev.id, '/api/kelvin', { value: this.currentKelvin });
         } catch (e) {
           // Silently skip — device may have changed mode
         }
@@ -116,12 +116,13 @@ class CircadianManager extends EventEmitter {
       const triggerMin = alarmMin - 30;
       const adjustedTrigger = triggerMin < 0 ? triggerMin + 1440 : triggerMin;
 
-      if (nowMin === adjustedTrigger && !alarm.triggered) {
+      // Use 2-minute window to avoid missing trigger due to timer drift
+      if (nowMin >= adjustedTrigger && nowMin < adjustedTrigger + 2 && !alarm.triggered) {
         alarm.triggered = true;
         this._triggerSunrise(alarm);
       }
-      // Reset triggered flag after the alarm window passes
-      if (nowMin === (alarmMin + 1) % 1440) {
+      // Reset triggered flag after the alarm window passes (5 min after wake time)
+      if (nowMin > (alarmMin + 5) % 1440 && alarm.triggered) {
         alarm.triggered = false;
       }
     }
@@ -129,7 +130,8 @@ class CircadianManager extends EventEmitter {
 
   async _triggerSunrise(alarm) {
     console.log(`[Circadian] Triggering sunrise alarm for ${alarm.hour}:${String(alarm.minute).padStart(2, '0')}`);
-    const targets = alarm.deviceIds.length > 0 ? alarm.deviceIds : Object.keys(this.dm.getAll());
+    const allDevices = this.dm.getAll(); // Returns array
+    const targets = alarm.deviceIds.length > 0 ? alarm.deviceIds : allDevices.filter(d => d.online).map(d => d.id);
     for (const id of targets) {
       try {
         await this.dm.sendCommand(id, '/api/pattern', { id: 'sunrise' });

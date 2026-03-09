@@ -40,7 +40,7 @@ function connect() {
     const el = document.getElementById('connection-status');
     el.textContent = 'Connected';
     el.className = 'connected';
-    if (reconnectTimer) { clearInterval(reconnectTimer); reconnectTimer = null; }
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
   };
 
   ws.onmessage = (e) => {
@@ -51,7 +51,8 @@ function connect() {
     const el = document.getElementById('connection-status');
     el.textContent = 'Disconnected \u2013 reconnecting...';
     el.className = 'disconnected';
-    if (!reconnectTimer) reconnectTimer = setInterval(connect, 3000);
+    // Use setTimeout (not setInterval) to prevent duplicate connections
+    if (!reconnectTimer) reconnectTimer = setTimeout(() => { reconnectTimer = null; connect(); }, 3000);
   };
 }
 
@@ -114,6 +115,12 @@ function handleMessage(msg) {
       break;
     case 'weather_update':
       updateWeatherDisplay(msg.data);
+      break;
+    case 'animation_status':
+      updateAnimationUI(msg.data);
+      break;
+    case 'animation_playing':
+      showToast('Playing: ' + (msg.data.name || 'Animation'), 'info');
       break;
     case 'error':
       showToast(msg.message || 'An error occurred', 'error');
@@ -1174,6 +1181,12 @@ function updateAudioVisibility() {
     const hasNotify = devices.some(d => d.online && d.capabilities && d.capabilities.includes('notify'));
     notifySection.style.display = hasNotify ? '' : 'none';
   }
+  // Show animation section when any device has animations capability
+  const animSection = document.getElementById('animation-section');
+  if (animSection) {
+    const hasAnim = devices.some(d => d.online && d.capabilities && d.capabilities.includes('animations'));
+    animSection.style.display = hasAnim ? '' : 'none';
+  }
 }
 
 // ---- Circadian / Ambient ----
@@ -1366,6 +1379,238 @@ function renderNotificationHistory(history) {
     item.appendChild(time);
     container.appendChild(item);
   }
+}
+
+// ---- Animation Designer ----
+
+// Temporary keyframes for the editor
+let editorKeyframes = [];
+let animationData = { animations: [], playing: {} };
+
+function updateAnimationUI(data) {
+  if (!data) return;
+  animationData = data;
+
+  // Render preset buttons
+  const presetsEl = document.getElementById('anim-presets');
+  if (presetsEl) {
+    while (presetsEl.firstChild) presetsEl.removeChild(presetsEl.firstChild);
+    const anims = data.animations || [];
+    for (const anim of anims) {
+      const btn = document.createElement('button');
+      btn.textContent = anim.name;
+      const isPlaying = Object.values(data.playing || {}).includes(anim.name);
+      if (isPlaying) btn.classList.add('playing');
+      btn.addEventListener('click', () => animPlayPreset(anim.name));
+      presetsEl.appendChild(btn);
+    }
+  }
+
+  // Render saved animation list
+  renderSavedAnimations(data.animations || []);
+}
+
+function renderSavedAnimations(anims) {
+  const container = document.getElementById('anim-saved-list');
+  if (!container) return;
+  while (container.firstChild) container.removeChild(container.firstChild);
+
+  if (anims.length === 0) {
+    const empty = document.createElement('div');
+    empty.style.cssText = 'color:var(--text-sub); font-size:12px; padding:8px 0';
+    empty.textContent = 'No saved animations';
+    container.appendChild(empty);
+    return;
+  }
+
+  for (const anim of anims) {
+    const item = document.createElement('div');
+    item.className = 'anim-saved-item';
+
+    const name = document.createElement('span');
+    name.className = 'anim-saved-name';
+    name.textContent = anim.name;
+
+    const info = document.createElement('span');
+    info.className = 'anim-saved-info';
+    info.textContent = anim.keyframeCount + ' kf, ' + (anim.duration / 1000).toFixed(1) + 's';
+
+    const playBtn = document.createElement('button');
+    playBtn.className = 'anim-saved-play';
+    playBtn.textContent = 'Play';
+    playBtn.addEventListener('click', () => animPlayPreset(anim.name));
+
+    const delBtn = document.createElement('button');
+    delBtn.className = 'anim-saved-del';
+    delBtn.textContent = 'Del';
+    delBtn.addEventListener('click', () => animDeleteSaved(anim.name));
+
+    item.appendChild(name);
+    item.appendChild(info);
+    item.appendChild(playBtn);
+    item.appendChild(delBtn);
+    container.appendChild(item);
+  }
+}
+
+function animPlayPreset(name) {
+  if (!ws || ws.readyState !== 1) return;
+  ws.send(JSON.stringify({ type: 'animation_play', name: name, loop: true }));
+  showToast('Playing: ' + name, 'info');
+}
+
+function animStopAll() {
+  if (!ws || ws.readyState !== 1) return;
+  ws.send(JSON.stringify({ type: 'animation_stop', revertMode: 'candle' }));
+  showToast('Stopping animations', 'info');
+}
+
+function animAddKeyframe() {
+  const timeInput = document.getElementById('new-kf-time');
+  const colorInput = document.getElementById('new-kf-color');
+  if (!timeInput || !colorInput) return;
+
+  const timeMs = parseInt(timeInput.value) || 0;
+  const hex = colorInput.value;
+  const r = parseInt(hex.substr(1, 2), 16);
+  const g = parseInt(hex.substr(3, 2), 16);
+  const b = parseInt(hex.substr(5, 2), 16);
+
+  editorKeyframes.push({ time: timeMs, leds: 'solid', r, g, b });
+  editorKeyframes.sort((a, b) => a.time - b.time);
+
+  // Auto-advance time for next keyframe
+  timeInput.value = timeMs + 1000;
+
+  renderEditorKeyframes();
+}
+
+function animRemoveKeyframe(idx) {
+  editorKeyframes.splice(idx, 1);
+  renderEditorKeyframes();
+}
+
+function renderEditorKeyframes() {
+  const container = document.getElementById('anim-kf-list');
+  if (!container) return;
+  while (container.firstChild) container.removeChild(container.firstChild);
+
+  for (let i = 0; i < editorKeyframes.length; i++) {
+    const kf = editorKeyframes[i];
+    const row = document.createElement('div');
+    row.className = 'anim-kf-row';
+
+    const label = document.createElement('span');
+    label.className = 'anim-kf-label';
+    label.textContent = 'KF ' + (i + 1);
+
+    const timeSpan = document.createElement('span');
+    timeSpan.style.cssText = 'color:var(--text-main); font-size:12px; min-width:50px';
+    timeSpan.textContent = kf.time + 'ms';
+
+    const colorDot = document.createElement('span');
+    colorDot.style.cssText = 'width:20px; height:20px; border-radius:4px; display:inline-block; background:rgb(' + kf.r + ',' + kf.g + ',' + kf.b + ')';
+
+    const rgb = document.createElement('span');
+    rgb.style.cssText = 'color:var(--text-sub); font-size:11px';
+    rgb.textContent = kf.r + ',' + kf.g + ',' + kf.b;
+
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'anim-kf-remove';
+    removeBtn.textContent = 'X';
+    const idx = i;
+    removeBtn.addEventListener('click', () => animRemoveKeyframe(idx));
+
+    row.appendChild(label);
+    row.appendChild(timeSpan);
+    row.appendChild(colorDot);
+    row.appendChild(rgb);
+    row.appendChild(removeBtn);
+    container.appendChild(row);
+  }
+}
+
+function animSaveNew() {
+  const nameInput = document.getElementById('anim-save-name');
+  if (!nameInput) return;
+  const name = nameInput.value.trim();
+  if (!name) { showToast('Enter an animation name', 'error'); return; }
+  if (editorKeyframes.length < 2) { showToast('Need at least 2 keyframes', 'error'); return; }
+
+  const duration = editorKeyframes[editorKeyframes.length - 1].time;
+
+  fetch('/api/animations', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: name,
+      duration: duration,
+      loop: true,
+      keyframes: editorKeyframes
+    })
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.ok) {
+      showToast('Saved: ' + name, 'info');
+      nameInput.value = '';
+      editorKeyframes = [];
+      renderEditorKeyframes();
+      // Refresh animation list
+      fetch('/api/animations/status').then(r => r.json()).then(d => updateAnimationUI(d));
+    } else {
+      showToast(data.error || 'Save failed', 'error');
+    }
+  })
+  .catch(e => showToast('Save error: ' + e.message, 'error'));
+}
+
+function animPreviewNew() {
+  if (editorKeyframes.length < 2) { showToast('Need at least 2 keyframes', 'error'); return; }
+
+  const duration = editorKeyframes[editorKeyframes.length - 1].time;
+
+  // Save as temporary, play, then delete
+  fetch('/api/animations', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: '__preview__',
+      duration: duration,
+      loop: true,
+      keyframes: editorKeyframes
+    })
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.ok) {
+      return fetch('/api/animations/play', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: '__preview__', device: 'all', loop: true })
+      });
+    }
+  })
+  .then(() => {
+    showToast('Previewing animation...', 'info');
+    // Clean up temporary preview animation after a short delay
+    setTimeout(() => {
+      fetch('/api/animations/__preview__', { method: 'DELETE' }).catch(() => {});
+    }, 1000);
+  })
+  .catch(e => showToast('Preview error: ' + e.message, 'error'));
+}
+
+function animDeleteSaved(name) {
+  fetch('/api/animations/' + encodeURIComponent(name), { method: 'DELETE' })
+    .then(r => r.json())
+    .then(data => {
+      if (data.ok) {
+        showToast('Deleted: ' + name, 'info');
+        fetch('/api/animations/status').then(r => r.json()).then(d => updateAnimationUI(d));
+      }
+    })
+    .catch(e => showToast('Delete error: ' + e.message, 'error'));
 }
 
 // ---- Start ----

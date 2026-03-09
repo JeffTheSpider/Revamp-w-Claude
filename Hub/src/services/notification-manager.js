@@ -11,6 +11,7 @@ const EventEmitter = require('events');
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
+const crypto = require('crypto');
 
 const DATA_FILE = path.join(__dirname, '..', '..', 'notifications.json');
 const MAX_HISTORY = 50;
@@ -321,12 +322,8 @@ class NotificationManager extends EventEmitter {
   }
 
   _generateKey() {
-    // Simple random hex key (16 bytes = 32 hex chars)
-    const chars = 'abcdef0123456789';
-    let key = '';
-    for (let i = 0; i < 32; i++) {
-      key += chars[Math.floor(Math.random() * chars.length)];
-    }
+    // Cryptographically secure random hex key (16 bytes = 32 hex chars)
+    const key = crypto.randomBytes(16).toString('hex');
     return key;
   }
 }

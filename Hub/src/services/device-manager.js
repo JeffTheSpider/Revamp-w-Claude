@@ -147,6 +147,45 @@ class DeviceManager extends EventEmitter {
     return this.sendCommand(deviceId, '/api/color', { r, g, b });
   }
 
+  // Send POST to a device endpoint with form-encoded body
+  async sendPost(deviceId, endpoint, params = {}) {
+    const device = this.devices.get(deviceId);
+    if (!device || !device.online) {
+      throw new Error(`Device ${deviceId} not available`);
+    }
+    return this.httpPost(`http://${device.ip}${endpoint}`, params);
+  }
+
+  // HTTP POST with form-encoded body, returns parsed JSON or text
+  httpPost(url, params = {}) {
+    const postData = new URLSearchParams(params).toString();
+    const urlObj = new URL(url);
+    return new Promise((resolve, reject) => {
+      const req = http.request({
+        hostname: urlObj.hostname,
+        port: urlObj.port || 80,
+        path: urlObj.pathname,
+        method: 'POST',
+        timeout: REQUEST_TIMEOUT,
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Content-Length': Buffer.byteLength(postData)
+        }
+      }, (res) => {
+        let body = '';
+        res.on('data', (chunk) => body += chunk);
+        res.on('end', () => {
+          try { resolve(JSON.parse(body)); }
+          catch { resolve(body); }
+        });
+      });
+      req.on('timeout', () => { req.destroy(); reject(new Error('Timeout')); });
+      req.on('error', (err) => reject(err));
+      req.write(postData);
+      req.end();
+    });
+  }
+
   // Simple HTTP GET with timeout, returns parsed JSON or text
   httpGet(url) {
     return new Promise((resolve, reject) => {

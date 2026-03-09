@@ -42,8 +42,10 @@ void notifyStart(uint8_t r, uint8_t g, uint8_t b,
   notify.startTime = millis();
   notify.lastFrame = 0;
   notify.step = 0;
-  logInfo("Notify start: pat=" + String(pattern) + " dur=" + String(durationMs) +
-          " pri=" + String(priority) + " rgb=" + String(r) + "," + String(g) + "," + String(b));
+  char buf[64];
+  snprintf(buf, sizeof(buf), "Notify: pat=%d dur=%d pri=%d rgb=%d,%d,%d",
+           pattern, durationMs, priority, r, g, b);
+  logInfo(buf);
 }
 
 void notifyStop() {

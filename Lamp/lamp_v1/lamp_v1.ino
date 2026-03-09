@@ -15,7 +15,7 @@
 // Safe mode skips NeoPixel init so USB recovery still works.
 // ============================================================
 
-#define FW_VERSION "1.4.0"
+#define FW_VERSION "1.5.0"
 
 #include <ESP8266WiFi.h>
 #include <ESP8266mDNS.h>
@@ -98,6 +98,7 @@ void handleApiMusic() {
 // === Include modular headers ===
 #include "led_patterns.h"
 #include "notify.h"
+#include "animations.h"
 #include "morse.h"
 
 // === EEPROM Debounce ===
@@ -155,7 +156,8 @@ void readEepromAll() {
   ssid = "";
   password = "";
 
-  if (ssidLen <= 30 && passLen <= 30 && ssidLen > 0) {
+  if (ssidLen > 0 && ssidLen <= 30 && passLen <= 30 &&
+      (EEPROM_SSID_START + ssidLen + passLen) < EEPROM_BRIGHTNESS) {
     ssid.reserve(ssidLen);
     for (int n = 0; n < ssidLen; n++) {
       ssid += (char)EEPROM.read(EEPROM_SSID_START + n);
@@ -615,6 +617,73 @@ void handleApiNotify() {
 }
 
 // ============================================================
+// Web Server - Animation Keyframe Upload (POST /api/animation/keyframe)
+// ============================================================
+void handleApiAnimKeyframe() {
+  if (safeMode) {
+    server.send(503, "application/json", "{\"ok\":false,\"reason\":\"safe mode\"}");
+    return;
+  }
+  int idx = server.hasArg("idx") ? server.arg("idx").toInt() : -1;
+  int t = server.hasArg("t") ? server.arg("t").toInt() : 0;
+  String hexData = server.hasArg("d") ? server.arg("d") : "";
+
+  if (idx < 0 || idx >= ANIM_MAX_KEYFRAMES) {
+    server.send(400, "application/json", "{\"ok\":false,\"reason\":\"idx out of range\"}");
+    return;
+  }
+  if ((int)hexData.length() < PIXEL_COUNT * 6) {
+    server.send(400, "application/json", "{\"ok\":false,\"reason\":\"hex data too short\"}");
+    return;
+  }
+
+  AnimKeyframe& kf = anim.keyframes[idx];
+  kf.timeMs = t;
+  for (int i = 0; i < PIXEL_COUNT * 3; i++) {
+    char hi = hexData[i * 2];
+    char lo = hexData[i * 2 + 1];
+    uint8_t val = 0;
+    val |= (hi >= 'a' ? hi - 'a' + 10 : (hi >= 'A' ? hi - 'A' + 10 : hi - '0')) << 4;
+    val |= (lo >= 'a' ? lo - 'a' + 10 : (lo >= 'A' ? lo - 'A' + 10 : lo - '0'));
+    kf.pixels[i] = val;
+  }
+
+  if (idx + 1 > anim.keyframeCount) anim.keyframeCount = idx + 1;
+  if (kf.timeMs > anim.totalDurationMs) anim.totalDurationMs = kf.timeMs;
+  anim.loaded = (anim.keyframeCount >= 2);
+
+  char json[96];
+  snprintf(json, sizeof(json), "{\"ok\":true,\"idx\":%d,\"t\":%d,\"total\":%d}",
+           idx, t, anim.keyframeCount);
+  server.send(200, "application/json", json);
+}
+
+void handleApiAnimation() {
+  String action = server.hasArg("action") ? server.arg("action") : "status";
+  if (action == "play") {
+    if (server.hasArg("loop")) anim.loop = server.arg("loop") == "1";
+    animPlay();
+    setMode(MODE_CUSTOM);
+    server.send(200, "application/json", "{\"ok\":true,\"action\":\"play\"}");
+  } else if (action == "stop") {
+    animStop();
+    server.send(200, "application/json", "{\"ok\":true,\"action\":\"stop\"}");
+  } else if (action == "clear") {
+    animClear();
+    server.send(200, "application/json", "{\"ok\":true,\"action\":\"clear\"}");
+  } else {
+    char json[128];
+    snprintf(json, sizeof(json),
+      "{\"loaded\":%s,\"playing\":%s,\"keyframes\":%d,\"duration\":%d,\"loop\":%s}",
+      anim.loaded ? "true" : "false",
+      anim.playing ? "true" : "false",
+      anim.keyframeCount, anim.totalDurationMs,
+      anim.loop ? "true" : "false");
+    server.send(200, "application/json", json);
+  }
+}
+
+// ============================================================
 // Web Server - JSON Status (GET /api/status)
 // ============================================================
 void handleApiStatus() {
@@ -642,7 +711,7 @@ void handleApiStatus() {
     "\"bootCount\":%d,"
     "\"stable\":%s,"
     "\"notifying\":%s,"
-    "\"capabilities\":[\"color\",\"morse\",\"patterns\",\"music\",\"ambient\",\"notify\"]}",
+    "\"capabilities\":[\"color\",\"morse\",\"patterns\",\"music\",\"ambient\",\"notify\",\"animations\"]}",
     FW_VERSION,
     safeMode ? "true" : "false",
     uptime,
@@ -1179,6 +1248,8 @@ void setup() {
   server.on("/api/pinscan", handleApiPinScan);
   server.on("/api/music", handleApiMusic);
   server.on("/api/notify", handleApiNotify);
+  server.on("/api/animation", handleApiAnimation);
+  server.on("/api/animation/keyframe", handleApiAnimKeyframe);
   server.onNotFound(handleDashboard);
   server.begin();
   logInfo("Web server started on port 80");

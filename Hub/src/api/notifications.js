@@ -73,12 +73,18 @@ router.get('/notifications/history', (req, res) => {
 });
 
 // GET /api/notifications/config — Profiles + weather config
+// Note: API key is shown for local network webhook URL display.
+// Weather API key is redacted (only shows if set).
 router.get('/notifications/config', (req, res) => {
   const nm = req.app.get('notificationManager');
   res.json({
     profiles: nm.getProfiles(),
     apiKey: nm.apiKey,
-    weather: nm.weatherConfig
+    weather: {
+      city: nm.weatherConfig.city,
+      enabled: nm.weatherConfig.enabled,
+      hasApiKey: !!nm.weatherConfig.apiKey
+    }
   });
 });
 

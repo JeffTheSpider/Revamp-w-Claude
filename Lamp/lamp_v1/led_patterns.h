@@ -70,6 +70,7 @@ enum LedMode : uint8_t {
   MODE_OCEAN,      // Ambient: deep blue/turquoise waves
   MODE_FOREST,     // Ambient: green with golden sunbeams
   MODE_OFF,
+  MODE_CUSTOM,     // Custom animation (uploaded from Hub)
   MODE_COUNT
 };
 
@@ -79,7 +80,7 @@ const char* const MODE_IDS[] = {
   "rainbow", "candle", "wave", "sparkle",
   "wedge", "pulse", "strips", "color",
   "beat_glow", "strip_spectrum", "color_pulse",
-  "daylight", "sunrise", "fireplace", "ocean", "forest", "off"
+  "daylight", "sunrise", "fireplace", "ocean", "forest", "off", "custom"
 };
 
 // Human-readable labels (for UI)
@@ -88,7 +89,7 @@ const char* const MODE_LABELS[] = {
   "Rainbow", "Candle", "Color Wave", "Sparkle",
   "Wedge", "Pulse", "Strip Colors", "Custom",
   "Beat Glow", "Strip Spectrum", "Color Pulse",
-  "Daylight", "Sunrise", "Fireplace", "Ocean", "Forest", "Off"
+  "Daylight", "Sunrise", "Fireplace", "Ocean", "Forest", "Off", "Custom Anim"
 };
 
 LedMode currentMode = MODE_CANDLE;  // Default: cozy candle for a lamp
@@ -101,6 +102,9 @@ LedMode modeFromId(const String& id) {
   }
   return MODE_CANDLE;
 }
+
+// Forward declaration — animations.h included after this header
+bool animTick(int br);
 
 // Set the current mode (triggers pattern reset)
 void setMode(LedMode mode) {
@@ -720,6 +724,7 @@ void tickPatterns(int br) {
     case MODE_OCEAN:      patOcean(br); break;
     case MODE_FOREST:     patForest(br); break;
     case MODE_OFF:      break;
+    case MODE_CUSTOM:     animTick(br); break;
     case MODE_COUNT:    break;  // Sentinel
   }
 
