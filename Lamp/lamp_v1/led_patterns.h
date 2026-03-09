@@ -64,6 +64,11 @@ enum LedMode : uint8_t {
   MODE_BEAT_GLOW,  // Music: pulse on bass beat
   MODE_STRIP_SPEC, // Music: 4 strips = 4 frequency bands
   MODE_COLOR_PULSE,// Music: hue cycling with beat jumps
+  MODE_DAYLIGHT,   // Ambient: circadian color temp
+  MODE_SUNRISE,    // Ambient: 30-min dawn alarm ramp
+  MODE_FIREPLACE,  // Ambient: multi-flame orange-red
+  MODE_OCEAN,      // Ambient: deep blue/turquoise waves
+  MODE_FOREST,     // Ambient: green with golden sunbeams
   MODE_OFF,
   MODE_COUNT
 };
@@ -73,7 +78,8 @@ const char* const MODE_IDS[] = {
   "red", "green", "blue", "white",
   "rainbow", "candle", "wave", "sparkle",
   "wedge", "pulse", "strips", "color",
-  "beat_glow", "strip_spectrum", "color_pulse", "off"
+  "beat_glow", "strip_spectrum", "color_pulse",
+  "daylight", "sunrise", "fireplace", "ocean", "forest", "off"
 };
 
 // Human-readable labels (for UI)
@@ -81,7 +87,8 @@ const char* const MODE_LABELS[] = {
   "Red", "Green", "Blue", "White",
   "Rainbow", "Candle", "Color Wave", "Sparkle",
   "Wedge", "Pulse", "Strip Colors", "Custom",
-  "Beat Glow", "Strip Spectrum", "Color Pulse", "Off"
+  "Beat Glow", "Strip Spectrum", "Color Pulse",
+  "Daylight", "Sunrise", "Fireplace", "Ocean", "Forest", "Off"
 };
 
 LedMode currentMode = MODE_CANDLE;  // Default: cozy candle for a lamp
@@ -531,6 +538,149 @@ void patColorPulse(int br) {
 }
 
 // ============================================================
+// Ambient Pattern State
+// ============================================================
+unsigned long sunriseStartMs = 0;   // When sunrise pattern was activated
+uint16_t daylightKelvin = 4000;     // Set via /api/kelvin (Hub sends this)
+
+// Kelvin to RGB conversion (Tanner Helland approximation)
+void kelvinToRgb(int kelvin, uint8_t &r, uint8_t &g, uint8_t &b) {
+  float temp = kelvin / 100.0f;
+  if (temp <= 66) r = 255;
+  else r = constrain((int)(329.7f * powf(temp - 60, -0.1332f)), 0, 255);
+  if (temp <= 66) g = constrain((int)(99.47f * logf(temp) - 161.12f), 0, 255);
+  else g = constrain((int)(288.12f * powf(temp - 60, -0.0755f)), 0, 255);
+  if (temp >= 66) b = 255;
+  else if (temp <= 19) b = 0;
+  else b = constrain((int)(138.52f * logf(temp - 10) - 305.04f), 0, 255);
+}
+
+// ============================================================
+// Ambient Pattern: Daylight
+// ============================================================
+// Circadian color temperature. Lamp doesn't have NTP, so it uses
+// daylightKelvin set by Hub via /api/kelvin. Defaults to 4000K.
+void patDaylight(int br) {
+  unsigned long now = millis();
+  if (now - lastPat < 1000) return;  // Update once per second
+  lastPat = now;
+
+  uint8_t r, g, b;
+  kelvinToRgb(daylightKelvin, r, g, b);
+  r = (uint8_t)((uint16_t)r * br / 255);
+  g = (uint8_t)((uint16_t)g * br / 255);
+  b = (uint8_t)((uint16_t)b * br / 255);
+  for (int i = 0; i < PIXEL_COUNT; i++) strip.SetPixelColor(i, RgbColor(r, g, b));
+  showStrip();
+}
+
+// ============================================================
+// Ambient Pattern: Sunrise Alarm
+// ============================================================
+// 30-minute ramp from dark to warm white. Self-contained timer.
+void patSunrise(int br) {
+  unsigned long now = millis();
+  if (now - lastPat < 100) return;  // 10fps
+  lastPat = now;
+
+  unsigned long elapsed = now - sunriseStartMs;
+  float progress = (float)elapsed / 1800000.0f;  // 0.0 to 1.0 over 30 min
+  if (progress > 1.0f) progress = 1.0f;
+
+  uint8_t rampBr = (uint8_t)(progress * br);
+  int kelvin = 1800 + (int)(progress * 3200);
+  uint8_t r, g, b;
+  kelvinToRgb(kelvin, r, g, b);
+  r = (uint8_t)((uint16_t)r * rampBr / 255);
+  g = (uint8_t)((uint16_t)g * rampBr / 255);
+  b = (uint8_t)((uint16_t)b * rampBr / 255);
+
+  for (int i = 0; i < PIXEL_COUNT; i++) strip.SetPixelColor(i, RgbColor(r, g, b));
+  showStrip();
+}
+
+// ============================================================
+// Ambient Pattern: Fireplace
+// ============================================================
+// Each strip is a flame column with independent flicker.
+void patFireplace(int br) {
+  unsigned long now = millis();
+  if (now - lastPat < 40) return;  // 25fps
+  lastPat = now;
+
+  for (int i = 0; i < PIXEL_COUNT; i++) {
+    uint8_t flicker = random(30, 100);
+    uint8_t intensity = (uint8_t)((uint16_t)flicker * br / 100);
+    uint8_t r = intensity;
+    uint8_t g = (uint8_t)((uint16_t)intensity * flicker / 180);
+    uint8_t b = (flicker > 85) ? (uint8_t)((uint16_t)intensity * (flicker - 85) / 200) : 0;
+    strip.SetPixelColor(i, RgbColor(r, g, b));
+  }
+  showStrip();
+}
+
+// ============================================================
+// Ambient Pattern: Ocean
+// ============================================================
+// Deep blue with turquoise waves rippling down the strips.
+void patOcean(int br) {
+  unsigned long now = millis();
+  if (now - lastPat < 33) return;  // 30fps
+  lastPat = now;
+
+  for (int i = 0; i < PIXEL_COUNT; i++) {
+    float wave1 = sinf((float)(i + patStep) * 6.28318f / 8.0f) * 0.5f + 0.5f;
+    float wave2 = sinf((float)(i * 3 + patStep * 2) * 6.28318f / 13.0f) * 0.3f + 0.5f;
+    float combined = wave1 * 0.6f + wave2 * 0.4f;
+
+    uint8_t b_val = (uint8_t)(br * (0.3f + combined * 0.7f));
+    uint8_t g_val = (uint8_t)(br * combined * 0.5f);
+    uint8_t r_val = 0;
+    if (random(200) == 0) {
+      r_val = br / 2; g_val = br / 2; b_val = br;
+    }
+    strip.SetPixelColor(i, RgbColor(r_val, g_val, b_val));
+  }
+  showStrip();
+  patStep++;
+}
+
+// ============================================================
+// Ambient Pattern: Forest
+// ============================================================
+// Green canopy with dappled golden sunbeams moving through strips.
+void patForest(int br) {
+  unsigned long now = millis();
+  if (now - lastPat < 40) return;  // 25fps
+  lastPat = now;
+
+  // Sunbeam sweeps through the 24 pixels
+  float beamCenter = (float)(patStep % 480) / 480.0f * PIXEL_COUNT;
+
+  for (int i = 0; i < PIXEL_COUNT; i++) {
+    float sway = sinf((float)(i * 2 + patStep) * 6.28318f / 10.0f) * 0.15f + 0.85f;
+    uint8_t g_val = (uint8_t)(br * sway * 0.7f);
+    uint8_t r_val = (uint8_t)(br * sway * 0.15f);
+    uint8_t b_val = (uint8_t)(br * sway * 0.05f);
+
+    // Sunbeam: golden overlay (width ~3 pixels for shorter strip)
+    float dist = (float)i - beamCenter;
+    if (dist > PIXEL_COUNT / 2) dist -= PIXEL_COUNT;
+    if (dist < -PIXEL_COUNT / 2) dist += PIXEL_COUNT;
+    float beamIntensity = 1.0f - fabsf(dist) / 2.0f;
+    if (beamIntensity > 0) {
+      beamIntensity *= beamIntensity;
+      uint8_t gold = (uint8_t)(br * beamIntensity * 0.6f);
+      r_val = (r_val + gold > 255) ? 255 : r_val + gold;
+      g_val = (g_val + gold * 3 / 4 > 255) ? 255 : g_val + gold * 3 / 4;
+    }
+    strip.SetPixelColor(i, RgbColor(r_val, g_val, b_val));
+  }
+  showStrip();
+  patStep++;
+}
+
+// ============================================================
 // Pattern Tick (call from loop)
 // ============================================================
 // Routes to the active pattern. Resets state on mode changes.
@@ -542,6 +692,7 @@ void tickPatterns(int br) {
     memset(wedgeBri, 0, sizeof(wedgeBri));
     wedgePauseStart = 0;
     beatDecay = 0; hueAngle = 0;
+    sunriseStartMs = millis();
     if (currentMode == MODE_OFF) clearAll();
   }
 
@@ -563,6 +714,11 @@ void tickPatterns(int br) {
     case MODE_BEAT_GLOW:  patBeatGlow(br); break;
     case MODE_STRIP_SPEC: patStripSpectrum(br); break;
     case MODE_COLOR_PULSE: patColorPulse(br); break;
+    case MODE_DAYLIGHT:   patDaylight(br); break;
+    case MODE_SUNRISE:    patSunrise(br); break;
+    case MODE_FIREPLACE:  patFireplace(br); break;
+    case MODE_OCEAN:      patOcean(br); break;
+    case MODE_FOREST:     patForest(br); break;
     case MODE_OFF:      break;
     case MODE_COUNT:    break;  // Sentinel
   }

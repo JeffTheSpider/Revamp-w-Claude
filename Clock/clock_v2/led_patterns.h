@@ -57,6 +57,11 @@ enum LedMode : uint8_t {
   MODE_BEAT_PULSE, // Music: flash on bass beat
   MODE_SPECTRUM,   // Music: 3-band ring spectrum
   MODE_BEAT_CHASE, // Music: spinning comet + beat boost
+  MODE_DAYLIGHT,   // Ambient: circadian color temp (NTP-driven)
+  MODE_SUNRISE,    // Ambient: 30-min dawn alarm ramp
+  MODE_FIREPLACE,  // Ambient: multi-flame orange-red
+  MODE_OCEAN,      // Ambient: deep blue/turquoise waves
+  MODE_FOREST,     // Ambient: green with golden sunbeams
   MODE_OFF,
   MODE_COUNT
 };
@@ -66,7 +71,8 @@ const char* const MODE_IDS[] = {
   "clock", "red", "green", "blue", "white",
   "special1", "wedge", "special3",
   "rainbow", "candle", "wave", "sparkle", "color",
-  "beat_pulse", "spectrum", "beat_chase", "off"
+  "beat_pulse", "spectrum", "beat_chase",
+  "daylight", "sunrise", "fireplace", "ocean", "forest", "off"
 };
 
 // Human-readable labels (for UI)
@@ -74,7 +80,8 @@ const char* const MODE_LABELS[] = {
   "Clock", "Red", "Green", "Blue", "White",
   "Blue Flash", "Wedge", "Sweep",
   "Rainbow", "Candle", "Color Wave", "Sparkle", "Custom",
-  "Beat Pulse", "Spectrum", "Beat Chase", "Off"
+  "Beat Pulse", "Spectrum", "Beat Chase",
+  "Daylight", "Sunrise", "Fireplace", "Ocean", "Forest", "Off"
 };
 
 LedMode currentMode = MODE_CLOCK;
@@ -588,6 +595,184 @@ void patBeatChase(int br) {
 }
 
 // ============================================================
+// Ambient Pattern State
+// ============================================================
+unsigned long sunriseStartMs = 0;   // When sunrise pattern was activated
+
+// Kelvin to RGB conversion (Tanner Helland approximation)
+void kelvinToRgb(int kelvin, uint8_t &r, uint8_t &g, uint8_t &b) {
+  float temp = kelvin / 100.0f;
+  if (temp <= 66) r = 255;
+  else r = constrain((int)(329.7f * powf(temp - 60, -0.1332f)), 0, 255);
+  if (temp <= 66) g = constrain((int)(99.47f * logf(temp) - 161.12f), 0, 255);
+  else g = constrain((int)(288.12f * powf(temp - 60, -0.0755f)), 0, 255);
+  if (temp >= 66) b = 255;
+  else if (temp <= 19) b = 0;
+  else b = constrain((int)(138.52f * logf(temp - 10) - 305.04f), 0, 255);
+}
+
+// Get circadian Kelvin from current hour (uses NTP)
+// Night 9pm-6am: 2700K (warm), Morning 6-8am: 2700->5000K,
+// Midday 8am-4pm: 5000->6500K->5000K, Evening 4-9pm: 5000->2700K
+int getCircadianKelvin() {
+  if (!isTimeValid()) return 4000;  // Default if no NTP
+  int h = hour();
+  int m = minute();
+  int totalMin = h * 60 + m;  // Minutes since midnight
+
+  if (totalMin < 360) return 2700;                                     // 0:00-6:00
+  if (totalMin < 480) return 2700 + (totalMin - 360) * 2300 / 120;    // 6:00-8:00
+  if (totalMin < 720) return 5000 + (totalMin - 480) * 1500 / 240;    // 8:00-12:00
+  if (totalMin < 960) return 6500 - (totalMin - 720) * 1500 / 240;    // 12:00-16:00
+  if (totalMin < 1260) return 5000 - (totalMin - 960) * 2300 / 300;   // 16:00-21:00
+  return 2700;                                                          // 21:00-24:00
+}
+
+// ============================================================
+// Ambient Pattern: Daylight
+// ============================================================
+// Circadian color temperature based on NTP time of day.
+// Warm at night, cool at midday. Recalculates every second.
+void patDaylight(int br) {
+  unsigned long now = millis();
+  if (now - lastPat < 1000) return;  // Update once per second
+  lastPat = now;
+
+  int kelvin = getCircadianKelvin();
+  uint8_t r, g, b;
+  kelvinToRgb(kelvin, r, g, b);
+  // Scale by brightness
+  r = (uint8_t)((uint16_t)r * br / 255);
+  g = (uint8_t)((uint16_t)g * br / 255);
+  b = (uint8_t)((uint16_t)b * br / 255);
+  for (int i = 0; i < PIXEL_COUNT; i++) setPixel(i, RgbColor(r, g, b));
+  strip.Show();
+}
+
+// ============================================================
+// Ambient Pattern: Sunrise Alarm
+// ============================================================
+// 30-minute ramp from dark to warm white. Self-contained timer.
+// 0-10min: dark->deep red, 10-20min: red->orange, 20-30min: orange->warm white.
+// After 30min: holds at warm white.
+void patSunrise(int br) {
+  unsigned long now = millis();
+  if (now - lastPat < 100) return;  // 10fps (slow changes)
+  lastPat = now;
+
+  unsigned long elapsed = now - sunriseStartMs;
+  float progress = (float)elapsed / 1800000.0f;  // 0.0 to 1.0 over 30 min
+  if (progress > 1.0f) progress = 1.0f;
+
+  // Brightness ramp: 0 -> br over the 30 minutes
+  uint8_t rampBr = (uint8_t)(progress * br);
+
+  // Color temperature ramp: 1800K -> 5000K
+  int kelvin = 1800 + (int)(progress * 3200);
+  uint8_t r, g, b;
+  kelvinToRgb(kelvin, r, g, b);
+  r = (uint8_t)((uint16_t)r * rampBr / 255);
+  g = (uint8_t)((uint16_t)g * rampBr / 255);
+  b = (uint8_t)((uint16_t)b * rampBr / 255);
+
+  for (int i = 0; i < PIXEL_COUNT; i++) setPixel(i, RgbColor(r, g, b));
+  strip.Show();
+}
+
+// ============================================================
+// Ambient Pattern: Fireplace
+// ============================================================
+// Multiple flame points with varying intensity. Warmer/wider than candle.
+// Each pixel has independent flicker — creates a rich, dancing fire effect.
+void patFireplace(int br) {
+  unsigned long now = millis();
+  if (now - lastPat < 40) return;  // 25fps
+  lastPat = now;
+
+  for (int i = 0; i < PIXEL_COUNT; i++) {
+    // Each pixel gets a unique flicker from its position + time
+    uint8_t flicker = random(30, 100);
+    uint8_t intensity = (uint8_t)((uint16_t)flicker * br / 100);
+    // Flame palette: deep red to bright orange-yellow
+    // Higher flicker = more orange/yellow, lower = deep red
+    uint8_t r = intensity;
+    uint8_t g = (uint8_t)((uint16_t)intensity * flicker / 180);  // 17%-56% green
+    uint8_t b = (flicker > 85) ? (uint8_t)((uint16_t)intensity * (flicker - 85) / 200) : 0;
+    setPixel(i, RgbColor(r, g, b));
+  }
+  strip.Show();
+}
+
+// ============================================================
+// Ambient Pattern: Ocean
+// ============================================================
+// Deep blue base with turquoise waves and white foam sparkles.
+// Multiple sine waves at different frequencies create organic motion.
+void patOcean(int br) {
+  unsigned long now = millis();
+  if (now - lastPat < 33) return;  // 30fps
+  lastPat = now;
+
+  for (int i = 0; i < PIXEL_COUNT; i++) {
+    // Two overlapping waves at different speeds
+    float wave1 = sinf((float)(i + patStep) * 6.28318f / 20.0f) * 0.5f + 0.5f;
+    float wave2 = sinf((float)(i * 3 + patStep * 2) * 6.28318f / 37.0f) * 0.3f + 0.5f;
+    float combined = wave1 * 0.6f + wave2 * 0.4f;
+
+    // Deep blue base + turquoise highlights
+    uint8_t b_val = (uint8_t)(br * (0.3f + combined * 0.7f));
+    uint8_t g_val = (uint8_t)(br * combined * 0.5f);
+    uint8_t r_val = 0;
+
+    // Occasional white foam sparkle
+    if (random(200) == 0) {
+      r_val = br / 2; g_val = br / 2; b_val = br;
+    }
+    setPixel(i, RgbColor(r_val, g_val, b_val));
+  }
+  strip.Show();
+  patStep++;
+}
+
+// ============================================================
+// Ambient Pattern: Forest
+// ============================================================
+// Lush green canopy with dappled golden sunbeams sweeping through.
+// Base is varying shades of green, sunbeam is a warm gold that
+// slowly travels around the ring.
+void patForest(int br) {
+  unsigned long now = millis();
+  if (now - lastPat < 40) return;  // 25fps
+  lastPat = now;
+
+  // Sunbeam position (slow sweep around the ring)
+  float beamCenter = (float)(patStep % 600) / 600.0f * PIXEL_COUNT;
+
+  for (int i = 0; i < PIXEL_COUNT; i++) {
+    // Base: varying greens with subtle sway
+    float sway = sinf((float)(i * 2 + patStep) * 6.28318f / 25.0f) * 0.15f + 0.85f;
+    uint8_t g_val = (uint8_t)(br * sway * 0.7f);
+    uint8_t r_val = (uint8_t)(br * sway * 0.15f);  // Slight warm tint
+    uint8_t b_val = (uint8_t)(br * sway * 0.05f);
+
+    // Sunbeam: golden overlay near beam center (width ~8 pixels)
+    float dist = (float)i - beamCenter;
+    if (dist > PIXEL_COUNT / 2) dist -= PIXEL_COUNT;
+    if (dist < -PIXEL_COUNT / 2) dist += PIXEL_COUNT;
+    float beamIntensity = 1.0f - fabsf(dist) / 4.0f;
+    if (beamIntensity > 0) {
+      beamIntensity *= beamIntensity;  // Quadratic falloff
+      uint8_t gold = (uint8_t)(br * beamIntensity * 0.6f);
+      r_val = (r_val + gold > 255) ? 255 : r_val + gold;
+      g_val = (g_val + gold * 3 / 4 > 255) ? 255 : g_val + gold * 3 / 4;
+    }
+    setPixel(i, RgbColor(r_val, g_val, b_val));
+  }
+  strip.Show();
+  patStep++;
+}
+
+// ============================================================
 // Pattern Tick (call from loop)
 // ============================================================
 // Routes to the active pattern. Resets state on mode changes.
@@ -599,6 +784,7 @@ void tickPatterns(int br) {
     memset(wedgeBri, 0, sizeof(wedgeBri));
     wedgePauseStart = 0;
     beatDecay = 0; chasePos = 0; chaseSpeed = 512;
+    sunriseStartMs = millis();
     if (currentMode == MODE_OFF) clearAll();
   }
 
@@ -621,6 +807,11 @@ void tickPatterns(int br) {
     case MODE_BEAT_PULSE: patBeatPulse(br); break;
     case MODE_SPECTRUM:   patSpectrum(br); break;
     case MODE_BEAT_CHASE: patBeatChase(br); break;
+    case MODE_DAYLIGHT:   patDaylight(br); break;
+    case MODE_SUNRISE:    patSunrise(br); break;
+    case MODE_FIREPLACE:  patFireplace(br); break;
+    case MODE_OCEAN:      patOcean(br); break;
+    case MODE_FOREST:     patForest(br); break;
     case MODE_OFF:      break;
     case MODE_COUNT:    break;  // Sentinel, not a real mode
   }

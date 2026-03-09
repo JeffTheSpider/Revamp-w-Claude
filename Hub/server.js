@@ -16,9 +16,11 @@ const fs = require('fs');
 const DeviceManager = require('./src/services/device-manager');
 const SceneManager = require('./src/services/scene-manager');
 const AudioManager = require('./src/services/audio-manager');
+const CircadianManager = require('./src/services/circadian-manager');
 const apiRoutes = require('./src/api/routes');
 const sceneRoutes = require('./src/api/scenes');
 const audioRoutes = require('./src/api/audio');
+const circadianRoutes = require('./src/api/circadian');
 
 // Load config
 let hubConfig = {};
@@ -80,15 +82,20 @@ const sceneManager = new SceneManager(deviceManager);
 // Audio manager (FFT + beat detection + UDP broadcast)
 const audioManager = new AudioManager();
 
+// Circadian manager (time-of-day color temperature + sunrise alarms)
+const circadianManager = new CircadianManager(deviceManager);
+
 // Make managers available to routes
 app.set('deviceManager', deviceManager);
 app.set('sceneManager', sceneManager);
 app.set('audioManager', audioManager);
+app.set('circadianManager', circadianManager);
 
 // API routes
 app.use('/api', apiRoutes);
 app.use('/api/scenes', sceneRoutes);
 app.use('/api/audio', audioRoutes);
+app.use('/api/circadian', circadianRoutes);
 
 // Global API error handler
 app.use('/api', (err, req, res, _next) => {
@@ -105,10 +112,11 @@ app.get('*', (req, res) => {
 wss.on('connection', (ws) => {
   console.log(`[WS] Client connected (total: ${wss.clients.size})`);
 
-  // Send current device states + audio status on connect
+  // Send current device states + service statuses on connect
   const devices = deviceManager.getAll();
   ws.send(JSON.stringify({ type: 'devices', data: devices }));
   ws.send(JSON.stringify({ type: 'audio_status', data: audioManager.getStatus() }));
+  ws.send(JSON.stringify({ type: 'circadian_status', data: circadianManager.getStatus() }));
 
   ws.on('message', (raw) => {
     try {
@@ -176,6 +184,26 @@ function handleWsMessage(ws, msg) {
       }
       break;
 
+    case 'circadian_start':
+      circadianManager.start();
+      break;
+
+    case 'circadian_stop':
+      circadianManager.stop();
+      break;
+
+    case 'sunrise_alarm_set':
+      if (msg.hour !== undefined && msg.minute !== undefined) {
+        circadianManager.setSunriseAlarm(msg.hour, msg.minute, msg.devices || []);
+      }
+      break;
+
+    case 'sunrise_alarm_remove':
+      if (msg.hour !== undefined && msg.minute !== undefined) {
+        circadianManager.removeSunriseAlarm(msg.hour, msg.minute);
+      }
+      break;
+
     default:
       console.log('[WS] Unknown message type:', msg.type);
   }
@@ -238,10 +266,28 @@ audioManager.on('stopped', (info) => {
   }
 });
 
+// Broadcast circadian events
+circadianManager.on('started', () => {
+  broadcast({ type: 'circadian_status', data: circadianManager.getStatus() });
+});
+circadianManager.on('stopped', () => {
+  broadcast({ type: 'circadian_status', data: circadianManager.getStatus() });
+});
+circadianManager.on('kelvinUpdate', (kelvin) => {
+  broadcast({ type: 'circadian_kelvin', kelvin });
+});
+circadianManager.on('sunriseTriggered', (alarm) => {
+  broadcast({ type: 'sunrise_triggered', alarm: `${alarm.hour}:${String(alarm.minute).padStart(2, '0')}` });
+});
+circadianManager.on('alarmSet', () => {
+  broadcast({ type: 'circadian_status', data: circadianManager.getStatus() });
+});
+
 // Graceful shutdown: stop cron jobs, polling, and audio
 function shutdown() {
   console.log('[Hub] Shutting down...');
   audioManager.stop();
+  circadianManager.stop();
   sceneManager.stopAll();
   deviceManager.stop();
   server.close();

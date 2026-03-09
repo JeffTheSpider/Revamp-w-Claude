@@ -96,6 +96,15 @@ function handleMessage(msg) {
       audioActive = !!(msg.data && msg.data.active);
       updateAudioToggle();
       break;
+    case 'circadian_status':
+      updateCircadianUI(msg.data);
+      break;
+    case 'circadian_kelvin':
+      updateCircadianKelvin(msg.kelvin);
+      break;
+    case 'sunrise_triggered':
+      showToast('Sunrise alarm triggered! (' + msg.alarm + ')', 'info');
+      break;
     case 'error':
       showToast(msg.message || 'An error occurred', 'error');
       break;
@@ -1143,6 +1152,77 @@ function updateAudioVisibility() {
     const online = devices.some(d => d.online);
     section.style.display = online ? '' : 'none';
   }
+  // Show ambient section when any device has ambient capability
+  const ambientSection = document.getElementById('ambient-section');
+  if (ambientSection) {
+    const hasAmbient = devices.some(d => d.online && d.capabilities && d.capabilities.includes('ambient'));
+    ambientSection.style.display = hasAmbient ? '' : 'none';
+  }
+}
+
+// ---- Circadian / Ambient ----
+
+let circadianActive = false;
+
+function toggleCircadian() {
+  if (!ws || ws.readyState !== 1) return;
+  ws.send(JSON.stringify({ type: circadianActive ? 'circadian_stop' : 'circadian_start' }));
+}
+
+function updateCircadianUI(data) {
+  if (!data) return;
+  circadianActive = data.enabled;
+  const btn = document.getElementById('circadian-toggle');
+  const activeUI = document.getElementById('circadian-active-ui');
+  if (btn) {
+    btn.textContent = circadianActive ? 'Stop Circadian' : 'Start Circadian';
+    btn.classList.toggle('active', circadianActive);
+  }
+  if (activeUI) activeUI.style.display = circadianActive ? '' : 'none';
+  if (data.currentKelvin) updateCircadianKelvin(data.currentKelvin);
+
+  // Show alarms
+  const alarmsEl = document.getElementById('sunrise-alarms');
+  if (alarmsEl && data.alarms && data.alarms.length > 0) {
+    alarmsEl.textContent = 'Active alarms: ' + data.alarms.map(a => a.time).join(', ');
+  } else if (alarmsEl) {
+    alarmsEl.textContent = '';
+  }
+}
+
+function updateCircadianKelvin(kelvin) {
+  const el = document.getElementById('circadian-kelvin');
+  if (el) el.textContent = kelvin + 'K';
+}
+
+function setSunriseAlarm() {
+  const timeInput = document.getElementById('sunrise-time');
+  if (!timeInput || !ws || ws.readyState !== 1) return;
+  const [h, m] = timeInput.value.split(':').map(Number);
+  ws.send(JSON.stringify({ type: 'sunrise_alarm_set', hour: h, minute: m }));
+  showToast('Sunrise alarm set for ' + timeInput.value, 'info');
+}
+
+function removeSunriseAlarm() {
+  const timeInput = document.getElementById('sunrise-time');
+  if (!timeInput || !ws || ws.readyState !== 1) return;
+  const [h, m] = timeInput.value.split(':').map(Number);
+  ws.send(JSON.stringify({ type: 'sunrise_alarm_remove', hour: h, minute: m }));
+  showToast('Sunrise alarm removed', 'info');
+}
+
+function setAllPattern(patternId) {
+  if (!ws || ws.readyState !== 1) return;
+  // Send to all online devices via Hub proxy
+  fetch('/api/devices/all/pattern', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: patternId })
+  }).then(r => r.json()).then(() => {
+    showToast('All devices: ' + patternId, 'info');
+  }).catch(() => {
+    showToast('Failed to set pattern', 'error');
+  });
 }
 
 // ---- Start ----

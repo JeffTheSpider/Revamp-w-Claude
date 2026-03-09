@@ -1,10 +1,10 @@
 // ============================================================
-// Charlie's Lamp v1.2.0 - Music Reactive
+// Charlie's Lamp v1.3.0 - Ambient Lighting
 // ============================================================
 // Firmware for 4-strip resin LED lamp (24x WS2812B).
 // Safety architecture mirrors Charlie's Mirror (clock):
 //   OTA, safe mode, watchdog, telnet logging, web dashboard.
-// Music reactive: UDP listener on port 4210, 3 music patterns.
+// Music reactive + ambient: 21 LED modes total.
 //
 // Hardware:
 //   NeoPixel: 4 strips on separate GPIOs (2,4,5,0) via BitBang
@@ -15,7 +15,7 @@
 // Safe mode skips NeoPixel init so USB recovery still works.
 // ============================================================
 
-#define FW_VERSION "1.2.0"
+#define FW_VERSION "1.3.0"
 
 #include <ESP8266WiFi.h>
 #include <ESP8266mDNS.h>
@@ -609,7 +609,7 @@ void handleApiStatus() {
     "\"strips\":%d,"
     "\"bootCount\":%d,"
     "\"stable\":%s,"
-    "\"capabilities\":[\"color\",\"morse\",\"patterns\",\"music\"]}",
+    "\"capabilities\":[\"color\",\"morse\",\"patterns\",\"music\",\"ambient\"]}",
     FW_VERSION,
     safeMode ? "true" : "false",
     uptime,
@@ -632,7 +632,7 @@ void handleApiStatus() {
 // Web Server - Pattern List (GET /api/patterns)
 // ============================================================
 void handleApiPatterns() {
-  char json[768];
+  char json[960];
   int pos = 0;
   json[pos++] = '[';
   for (int i = 0; i < MODE_COUNT; i++) {
@@ -719,6 +719,22 @@ void handleApiColor() {
   setCustomColor(r, g, b);
   setMode(MODE_COLOR);
   server.send(200, "application/json", "{\"ok\":true}");
+}
+
+// ============================================================
+// Web Server - Set Kelvin (POST /api/kelvin?value=X)
+// ============================================================
+// Sets color temperature for daylight pattern. Range: 2000-6500K.
+void handleApiKelvin() {
+  int val = server.hasArg("value") ? server.arg("value").toInt() : 0;
+  if (val < 2000 || val > 6500) {
+    server.send(400, "application/json", "{\"ok\":false,\"reason\":\"range 2000-6500\"}");
+    return;
+  }
+  daylightKelvin = val;
+  char json[48];
+  snprintf(json, sizeof(json), "{\"ok\":true,\"kelvin\":%d}", val);
+  server.send(200, "application/json", json);
 }
 
 // ============================================================
@@ -1117,6 +1133,7 @@ void setup() {
   server.on("/api/pattern", handleApiPattern);
   server.on("/api/brightness", handleApiBrightness);
   server.on("/api/color", handleApiColor);
+  server.on("/api/kelvin", handleApiKelvin);
   server.on("/api/morse", handleApiMorse);
   server.on("/log", handleLog);
   server.on("/led", handleLed);

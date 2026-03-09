@@ -1308,6 +1308,40 @@
     </div>
   </div>
 
+  <div class="audio-section" id="ambient-section" style="display:none">
+    <h2>Ambient Lighting</h2>
+    <div class="audio-controls">
+      <button class="audio-toggle-btn" id="circadian-toggle" onclick="toggleCircadian()">
+        Start Circadian
+      </button>
+    </div>
+    <div id="circadian-active-ui" style="display:none">
+      <div class="section-divider"></div>
+      <div class="section-label">Current Color Temperature</div>
+      <div style="text-align:center; padding: 8px 0">
+        <span id="circadian-kelvin" style="font-size:1.5em; font-weight:600; color:var(--text-main)">4000K</span>
+      </div>
+      <div class="section-divider"></div>
+      <div class="section-label">Sunrise Alarm</div>
+      <div style="display:flex; gap:8px; align-items:center; padding:8px 0; flex-wrap:wrap">
+        <input type="time" id="sunrise-time" value="07:00" style="background:var(--bg-surface0); color:var(--text-main); border:1px solid var(--bg-surface2); border-radius:8px; padding:6px 12px; font-family:inherit; font-size:0.95em">
+        <button class="save-scene-btn" onclick="setSunriseAlarm()">Set Alarm</button>
+        <button class="save-scene-btn" style="background:var(--bg-surface1)" onclick="removeSunriseAlarm()">Remove</button>
+      </div>
+      <div id="sunrise-alarms" style="padding:4px 0; color:var(--text-sub); font-size:0.85em"></div>
+    </div>
+    <div class="section-divider"></div>
+    <div class="section-label">Quick Ambient Patterns</div>
+    <div style="display:flex; gap:8px; flex-wrap:wrap; padding:8px 0">
+      <button class="save-scene-btn" onclick="setAllPattern('daylight')">Daylight</button>
+      <button class="save-scene-btn" onclick="setAllPattern('sunrise')">Sunrise</button>
+      <button class="save-scene-btn" onclick="setAllPattern('fireplace')">Fireplace</button>
+      <button class="save-scene-btn" onclick="setAllPattern('ocean')">Ocean</button>
+      <button class="save-scene-btn" onclick="setAllPattern('forest')">Forest</button>
+      <button class="save-scene-btn" onclick="setAllPattern('candle')">Candle</button>
+    </div>
+  </div>
+
   <div class="scenes-section" id="scenes-section" style="display:none">
     <div class="scenes-header">
       <h2>Scenes</h2>

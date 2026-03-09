@@ -1,8 +1,8 @@
 // ============================================================
-// Charlie's Mirror v2.6.0 - Music Reactive
+// Charlie's Mirror v2.7.0 - Ambient Lighting
 // ============================================================
 // Complete firmware: OTA, safe mode, watchdog, telnet logging,
-// NTP clock, 17 LED modes (incl. 3 music reactive), web dashboard.
+// NTP clock, 22 LED modes (music + ambient), web dashboard.
 //
 // Hardware (soldered wiring - cannot change):
 //   NeoPixel: GPIO3 (RX) via DMA/I2S - glitch-free, hardware-driven
@@ -13,7 +13,7 @@
 // Safe mode skips NeoPixel init so USB recovery still works.
 // ============================================================
 
-#define FW_VERSION "2.6.0"
+#define FW_VERSION "2.7.0"
 
 #include <ESP8266WiFi.h>
 #include <ESP8266mDNS.h>
@@ -644,7 +644,7 @@ void handleApiStatus() {
     "\"ntpValid\":%s,"
     "\"bootCount\":%d,"
     "\"stable\":%s,"
-    "\"capabilities\":[\"color\",\"ntp\",\"oled\",\"patterns\",\"music\"]}",
+    "\"capabilities\":[\"color\",\"ntp\",\"oled\",\"patterns\",\"music\",\"ambient\"]}",
     FW_VERSION,
     safeMode ? "true" : "false",
     uptime,
@@ -666,8 +666,8 @@ void handleApiStatus() {
 // Web Server - Pattern List (GET /api/patterns)
 // ============================================================
 void handleApiPatterns() {
-  // 14 modes * ~40 chars each + brackets = ~570 chars max
-  char json[640];
+  // 22 modes * ~40 chars each + brackets = ~900 chars max
+  char json[960];
   int pos = 0;
   json[pos++] = '[';
   for (int i = 0; i < MODE_COUNT; i++) {
