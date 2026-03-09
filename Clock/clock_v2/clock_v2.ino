@@ -1,8 +1,8 @@
 // ============================================================
-// Charlie's Mirror v2.5.0 - Improvement Sprint
+// Charlie's Mirror v2.6.0 - Music Reactive
 // ============================================================
 // Complete firmware: OTA, safe mode, watchdog, telnet logging,
-// NTP clock, 13 LED modes, web dashboard.
+// NTP clock, 17 LED modes (incl. 3 music reactive), web dashboard.
 //
 // Hardware (soldered wiring - cannot change):
 //   NeoPixel: GPIO3 (RX) via DMA/I2S - glitch-free, hardware-driven
@@ -13,7 +13,7 @@
 // Safe mode skips NeoPixel init so USB recovery still works.
 // ============================================================
 
-#define FW_VERSION "2.5.0"
+#define FW_VERSION "2.6.0"
 
 #include <ESP8266WiFi.h>
 #include <ESP8266mDNS.h>

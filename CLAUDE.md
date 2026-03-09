@@ -6,32 +6,35 @@ Three subsystems: Clock (ESP8266), Lamp (ESP8266), and Hub (Node.js) forming a u
 
 ## Projects
 
-### Clock ("Charlie's Mirror") - FIRMWARE v2.5.0
+### Clock ("Charlie's Mirror") - FIRMWARE v2.6.0
 - **Hardware**: ESP8266 (NodeMCU LoLin v2), 60x WS2812B NeoPixel ring, SSD1306 1.3" OLED
-- **Firmware**: `Clock/clock_v2/` - OTA, safe mode, watchdog, telnet, NTP, 14 LED patterns, web dashboard
+- **Firmware**: `Clock/clock_v2/` - OTA, safe mode, watchdog, telnet, NTP, 17 LED patterns (incl. 3 music reactive), web dashboard
 - **Wiring**: ALL SOLDERED - GPIO0=OLED SDA, GPIO2=OLED SCL, GPIO3=NeoPixel DMA
 - **Network**: Static IP 192.168.0.201, mDNS mirror.local, SoftAP fallback
 - **LEDs**: All 60 active (previously 0, 55-59 were wrongly masked as dead)
-- **Capabilities**: color, ntp, oled, patterns (reported in /api/status)
+- **Capabilities**: color, ntp, oled, patterns, music (reported in /api/status)
+- **Music**: UDP listener on port 4210, 3 patterns (Beat Pulse, Spectrum Ring, Beat Chase), 3s timeout fallback
 - **Libraries**: NeoPixelBus (DMA), ESP8266 SSD1306 (ThingPulse), TelnetStream, NTPClient, TimeLib, Timezone
 - **Original code**: `Clock/Original Code/clock_original.ino` (reference only)
 
-### Lamp ("Charlie's Lamp") - FIRMWARE v1.1.0
+### Lamp ("Charlie's Lamp") - FIRMWARE v1.2.0
 - **Hardware**: ESP8266EX (NodeMCU), 24x WS2812B (4 strips x 6 LEDs), embedded under resin
-- **Firmware**: `Lamp/lamp_v1/` - OTA, safe mode, watchdog, telnet, 13 LED patterns, morse code, web dashboard
+- **Firmware**: `Lamp/lamp_v1/` - OTA, safe mode, watchdog, telnet, 16 LED patterns (incl. 3 music reactive), morse code, web dashboard
 - **Wiring**: 4 strips on separate GPIOs: GPIO2=strip1(top), GPIO4=strip2, GPIO5=strip3, GPIO0=strip4(bottom)
 - **Network**: Static IP 192.168.0.202, mDNS lamp.local, SoftAP fallback
-- **Capabilities**: color, morse, patterns (reported in /api/status)
+- **Capabilities**: color, morse, patterns, music (reported in /api/status)
+- **Music**: UDP listener on port 4210, 3 patterns (Beat Glow, Strip Spectrum, Color Pulse), 3s timeout fallback
 - **Libraries**: NeoPixelBus (BitBang, DMA broken on this chip), TelnetStream
 - **Serial**: Available (LEDs not on GPIO3/RX). Telnet also available.
 - **Morse**: `morse.h` - non-blocking state machine, ITU timing, A-Z/0-9, adjustable WPM
 
-### Hub - FUNCTIONAL (Phase 6 + improvement sprint)
+### Hub - FUNCTIONAL (Phase 7 complete)
 - **Stack**: Node.js + Express + WebSocket
 - **Location**: `Hub/`
 - **Config**: `Hub/config.json` - device list, polling intervals, port
-- **Features**: Device discovery, REST proxy, PWA control panel (Catppuccin Mocha theme), scenes + scheduling, morse code UI, color temperature slider, rate limiting, device ID validation
-- **Service Worker**: Network-first strategy (v9), bump version when changing JS/HTML
+- **Features**: Device discovery, REST proxy, PWA control panel (Catppuccin Mocha theme), scenes + scheduling, morse code UI, color temperature slider, rate limiting, device ID validation, music reactive (FFT + beat detection + UDP broadcast)
+- **Audio**: `Hub/src/services/audio-manager.js` - FFmpeg capture, 1024-point FFT via fft.js, bass/mid/treble extraction, beat detection, UDP broadcast to 192.168.0.255:4210
+- **Service Worker**: Network-first strategy (v10), bump version when changing JS/HTML
 - **Run**: `cd Hub && npm start` (port 3000)
 
 ## Development Environment
@@ -65,24 +68,25 @@ Three subsystems: Clock (ESP8266), Lamp (ESP8266), and Hub (Node.js) forming a u
 ### Project Structure
 ```
 Clock/clock_v2/          # Active firmware
-  clock_v2.ino           # Main (~1000 lines)
+  clock_v2.ino           # Main (~1050 lines)
   config.h               # Pin defs, constants, EEPROM layout
   ntp_time.h             # NTP sync, UK timezone
-  led_patterns.h         # 13 LED patterns, dead pixel map
+  led_patterns.h         # 17 LED patterns (14 + 3 music reactive)
   build/                 # Compiled binary
 
 Lamp/lamp_v1/            # Active firmware
-  lamp_v1.ino            # Main (~730 lines)
+  lamp_v1.ino            # Main (~780 lines)
   config.h               # Pin defs, constants, EEPROM layout
-  led_patterns.h         # 12 LED patterns (no dead pixels)
+  led_patterns.h         # 16 LED patterns (13 + 3 music reactive)
+  morse.h                # Morse code encoder (non-blocking)
   build/                 # Compiled binary
 
 Hub/                     # Central control server
-  server.js              # Express + WebSocket + rate limiting
+  server.js              # Express + WebSocket + rate limiting + audio events
   config.json            # Device IPs, polling, port settings
-  src/services/          # Device manager, scene manager
-  src/api/               # REST routes (devices, scenes) + device ID validation
-  public/                # PWA frontend (Catppuccin Mocha glassmorphism)
+  src/services/          # Device manager, scene manager, audio manager
+  src/api/               # REST routes (devices, scenes, audio) + device ID validation
+  public/                # PWA frontend (Catppuccin Mocha glassmorphism + spectrum viz)
 
 scripts/                 # Build & OTA helper scripts
 
@@ -110,3 +114,5 @@ Clock/Original Code/     # Reference only
 - showStrip() with CanShow()+yield() before Show() prevents BitBang LED dropout
 - OTA progress: use `progress * 100 / total` not `total/100` (div-by-zero when total < 100)
 - Firmware reports explicit capabilities array in /api/status — Hub prefers this over detection
+- **Music reactive**: Hub broadcasts 8-byte UDP to 192.168.0.255:4210 (magic 0xBE, bass/mid/treble, beat, intensity, dominant, seq). ESPs listen with non-blocking parsePacket(). 3s timeout → fallback animation.
+- FFmpeg captures system audio via dshow (Stereo Mix). Requires Stereo Mix enabled in Windows Sound settings.

@@ -1,9 +1,10 @@
 // ============================================================
-// Charlie's Lamp v1.1.0
+// Charlie's Lamp v1.2.0 - Music Reactive
 // ============================================================
 // Firmware for 4-strip resin LED lamp (24x WS2812B).
 // Safety architecture mirrors Charlie's Mirror (clock):
 //   OTA, safe mode, watchdog, telnet logging, web dashboard.
+// Music reactive: UDP listener on port 4210, 3 music patterns.
 //
 // Hardware:
 //   NeoPixel: 4 strips on separate GPIOs (2,4,5,0) via BitBang
@@ -14,7 +15,7 @@
 // Safe mode skips NeoPixel init so USB recovery still works.
 // ============================================================
 
-#define FW_VERSION "1.1.0"
+#define FW_VERSION "1.2.0"
 
 #include <ESP8266WiFi.h>
 #include <ESP8266mDNS.h>
