@@ -24,6 +24,7 @@
 #include <Ticker.h>
 #include <TelnetStream.h>
 #include <NeoPixelBus.h>
+#include <WiFiUdp.h>
 #include "config.h"
 
 // === Globals ===
@@ -57,6 +58,41 @@ void logInfo(const String& msg);
 void logWarn(const String& msg);
 void logError(const String& msg);
 void logDebug(const String& msg);
+
+// === Music Reactive (UDP receiver) ===
+WiFiUDP musicUdp;
+const unsigned int MUSIC_UDP_PORT = 4210;
+bool musicActive = false;
+unsigned long lastMusicPacket = 0;
+uint8_t musicBass = 0, musicMid = 0, musicTreble = 0;
+bool musicBeat = false;
+uint8_t musicBeatIntensity = 0;
+uint8_t musicDominant = 0; // 0=bass, 1=mid, 2=treble
+
+void tickMusicUdp() {
+  int pktSize = musicUdp.parsePacket();
+  if (pktSize < 8) return;
+  uint8_t buf[8];
+  if (musicUdp.read(buf, 8) < 8 || buf[0] != 0xBE) return;
+  musicBass = buf[1]; musicMid = buf[2]; musicTreble = buf[3];
+  musicBeat = (buf[4] == 0x01);
+  musicBeatIntensity = buf[5];
+  musicDominant = buf[6];
+  lastMusicPacket = millis();
+  musicActive = true;
+}
+
+void handleApiMusic() {
+  char json[160];
+  snprintf(json, sizeof(json),
+    "{\"active\":%s,\"bass\":%d,\"mid\":%d,\"treble\":%d,"
+    "\"beat\":%s,\"intensity\":%d,\"lastMs\":%lu}",
+    musicActive ? "true" : "false",
+    musicBass, musicMid, musicTreble,
+    musicBeat ? "true" : "false", musicBeatIntensity,
+    musicActive ? millis() - lastMusicPacket : 0UL);
+  server.send(200, "application/json", json);
+}
 
 // === Include modular headers ===
 #include "led_patterns.h"
@@ -572,7 +608,7 @@ void handleApiStatus() {
     "\"strips\":%d,"
     "\"bootCount\":%d,"
     "\"stable\":%s,"
-    "\"capabilities\":[\"color\",\"morse\",\"patterns\"]}",
+    "\"capabilities\":[\"color\",\"morse\",\"patterns\",\"music\"]}",
     FW_VERSION,
     safeMode ? "true" : "false",
     uptime,
@@ -1054,6 +1090,10 @@ void setup() {
   // OTA
   setupOTA();
 
+  // Music UDP listener
+  musicUdp.begin(MUSIC_UDP_PORT);
+  logInfo("Music UDP on port " + String(MUSIC_UDP_PORT));
+
   // NeoPixel init (skip in safe mode to preserve USB recovery)
   if (!safeMode) {
     // Init all 4 strip pins as OUTPUT LOW
@@ -1085,6 +1125,7 @@ void setup() {
   server.on("/restart", handleRestart);
   server.on("/api/safemode", handleApiSafeMode);
   server.on("/api/pinscan", handleApiPinScan);
+  server.on("/api/music", handleApiMusic);
   server.onNotFound(handleDashboard);
   server.begin();
   logInfo("Web server started on port 80");
@@ -1119,6 +1160,13 @@ void loop() {
     strip.Show();
     modeChanged = true;
     watchdogStart();
+  }
+
+  // Music UDP data (non-blocking check)
+  tickMusicUdp();
+  if (musicActive && millis() - lastMusicPacket > 3000) {
+    musicActive = false;
+    musicBass = 0; musicMid = 0; musicTreble = 0; musicBeat = false;
   }
 
   // LED patterns (skip during OTA or safe mode)

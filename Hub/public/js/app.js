@@ -89,6 +89,13 @@ function handleMessage(msg) {
         ws.send(JSON.stringify({ type: 'get_devices' }));
       }
       break;
+    case 'audio_data':
+      updateAudioUI(msg);
+      break;
+    case 'audio_status':
+      audioActive = !!(msg.data && msg.data.active);
+      updateAudioToggle();
+      break;
     case 'error':
       showToast(msg.message || 'An error occurred', 'error');
       break;
@@ -152,6 +159,7 @@ function renderDevices() {
   const countEl = document.getElementById('all-device-count');
   if (countEl) countEl.textContent = '(' + onlineCount + ' online)';
   if (onlineCount > 0) renderAllPatterns();
+  updateAudioVisibility();
 }
 
 // Update an existing device card in-place without destroying user inputs
@@ -1046,6 +1054,95 @@ function formatDate(iso) {
     if (diff < 604800000) return Math.floor(diff / 86400000) + 'd ago';
     return d.toLocaleDateString();
   } catch (_) { return ''; }
+}
+
+// ---- Audio Reactive ----
+
+let audioActive = false;
+let spectrumCtx = null;
+let beatDotTimer = null;
+
+function toggleAudio() {
+  if (!ws || ws.readyState !== 1) return;
+  ws.send(JSON.stringify({ type: audioActive ? 'audio_stop' : 'audio_start' }));
+}
+
+function setAudioSensitivity(value) {
+  if (!ws || ws.readyState !== 1) return;
+  ws.send(JSON.stringify({ type: 'audio_sensitivity', value }));
+}
+
+function updateAudioToggle() {
+  const btn = document.getElementById('audio-toggle');
+  const ui = document.getElementById('audio-active-ui');
+  if (btn) {
+    btn.textContent = audioActive ? 'Stop Listening' : 'Start Listening';
+    btn.className = 'audio-toggle-btn' + (audioActive ? ' active' : '');
+  }
+  if (ui) ui.style.display = audioActive ? '' : 'none';
+}
+
+function updateAudioUI(data) {
+  const bassBar = document.getElementById('bass-bar');
+  const midBar = document.getElementById('mid-bar');
+  const trebleBar = document.getElementById('treble-bar');
+  if (bassBar) bassBar.style.width = (data.bass * 100) + '%';
+  if (midBar) midBar.style.width = (data.mid * 100) + '%';
+  if (trebleBar) trebleBar.style.width = (data.treble * 100) + '%';
+
+  // Beat dot
+  if (data.beat) {
+    const dot = document.getElementById('beat-dot');
+    if (dot) {
+      dot.classList.add('active');
+      clearTimeout(beatDotTimer);
+      beatDotTimer = setTimeout(() => dot.classList.remove('active'), 120);
+    }
+  }
+
+  // Spectrum canvas
+  if (data.spectrum) drawSpectrum(data.spectrum);
+}
+
+function drawSpectrum(bins) {
+  const canvas = document.getElementById('spectrum-canvas');
+  if (!canvas) return;
+  if (!spectrumCtx) spectrumCtx = canvas.getContext('2d');
+  const ctx = spectrumCtx;
+  const w = canvas.width;
+  const h = canvas.height;
+
+  ctx.clearRect(0, 0, w, h);
+
+  const barW = (w / bins.length) - 2;
+  const colors = [
+    '#f38ba8', '#f38ba8',   // red (bass)
+    '#fab387', '#fab387',   // peach
+    '#f9e2af', '#f9e2af',   // yellow
+    '#a6e3a1', '#a6e3a1',   // green (mid)
+    '#94e2d5', '#94e2d5',   // teal
+    '#89b4fa', '#89b4fa',   // blue
+    '#b4befe', '#b4befe',   // lavender (treble)
+    '#cba6f7', '#cba6f7'    // mauve
+  ];
+
+  for (let i = 0; i < bins.length; i++) {
+    const barH = Math.max(bins[i] * h * 0.9, 1);
+    const x = i * (barW + 2) + 1;
+    ctx.fillStyle = colors[i] || '#cba6f7';
+    ctx.beginPath();
+    ctx.roundRect(x, h - barH, barW, barH, 2);
+    ctx.fill();
+  }
+}
+
+// Show audio section when any device is online
+function updateAudioVisibility() {
+  const section = document.getElementById('audio-section');
+  if (section) {
+    const online = devices.some(d => d.online);
+    section.style.display = online ? '' : 'none';
+  }
 }
 
 // ---- Start ----

@@ -18,5 +18,13 @@
     "interval": 10000,
     "timeout": 5000,
     "maxBackoff": 60000
+  },
+  "audio": {
+    "ffmpegPath": "C:/Users/charl/bin/ffmpeg.exe",
+    "device": "Microphone (3- USB Audio Device)",
+    "sampleRate": 44100,
+    "fftSize": 1024,
+    "udpPort": 4210,
+    "broadcastAddr": "192.168.0.255"
   }
 }

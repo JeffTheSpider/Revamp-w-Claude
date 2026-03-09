@@ -61,6 +61,9 @@ enum LedMode : uint8_t {
   MODE_PULSE,      // Gentle breathing pulse
   MODE_STRIPS,     // Each strip a different color
   MODE_COLOR,      // Custom RGB color (set via API)
+  MODE_BEAT_GLOW,  // Music: pulse on bass beat
+  MODE_STRIP_SPEC, // Music: 4 strips = 4 frequency bands
+  MODE_COLOR_PULSE,// Music: hue cycling with beat jumps
   MODE_OFF,
   MODE_COUNT
 };
@@ -69,14 +72,16 @@ enum LedMode : uint8_t {
 const char* const MODE_IDS[] = {
   "red", "green", "blue", "white",
   "rainbow", "candle", "wave", "sparkle",
-  "wedge", "pulse", "strips", "color", "off"
+  "wedge", "pulse", "strips", "color",
+  "beat_glow", "strip_spectrum", "color_pulse", "off"
 };
 
 // Human-readable labels (for UI)
 const char* const MODE_LABELS[] = {
   "Red", "Green", "Blue", "White",
   "Rainbow", "Candle", "Color Wave", "Sparkle",
-  "Wedge", "Pulse", "Strip Colors", "Custom", "Off"
+  "Wedge", "Pulse", "Strip Colors", "Custom",
+  "Beat Glow", "Strip Spectrum", "Color Pulse", "Off"
 };
 
 LedMode currentMode = MODE_CANDLE;  // Default: cozy candle for a lamp
@@ -380,6 +385,152 @@ void patStrips(int br) {
 }
 
 // ============================================================
+// Music Pattern State
+// ============================================================
+// Music globals (musicBass, musicMid, etc.) are in lamp_v1.ino
+extern bool musicActive;
+extern uint8_t musicBass, musicMid, musicTreble;
+extern bool musicBeat;
+extern uint8_t musicBeatIntensity, musicDominant;
+
+uint8_t beatDecay = 0;      // Fade-out after beat flash
+uint16_t hueAngle = 0;      // Color Pulse hue position (0-1535)
+
+// ============================================================
+// Music Pattern: Beat Glow
+// ============================================================
+// All 24 LEDs pulse on beats, color based on dominant band.
+// Smooth decay between beats. Fallback: existing pulse pattern.
+void patBeatGlow(int br) {
+  unsigned long now = millis();
+  if (now - lastPat < 25) return;  // 40fps
+  lastPat = now;
+
+  if (musicActive) {
+    if (musicBeat) beatDecay = 255;
+    uint8_t val = (uint8_t)((uint16_t)beatDecay * br / 255);
+    RgbColor c;
+    switch (musicDominant) {
+      case 0:  c = RgbColor(val, val / 4, 0);         break; // Bass: warm orange
+      case 1:  c = RgbColor(0, val, val / 3);          break; // Mid: teal
+      default: c = RgbColor(val / 2, 0, val);          break; // Treble: purple
+    }
+    for (int i = 0; i < PIXEL_COUNT; i++) strip.SetPixelColor(i, c);
+    showStrip();
+    beatDecay = beatDecay > 8 ? beatDecay - 8 - (beatDecay >> 4) : 0;
+  } else {
+    patPulse(br);  // Fallback
+  }
+}
+
+// ============================================================
+// Music Pattern: Strip Spectrum
+// ============================================================
+// 4 strips = 4 frequency bands. LEDs per strip fill proportionally.
+// Strip 1: bass (red), Strip 2: low-mid (yellow), Strip 3: high-mid (green), Strip 4: treble (blue)
+void patStripSpectrum(int br) {
+  unsigned long now = millis();
+  if (now - lastPat < 33) return;  // 30fps
+  lastPat = now;
+
+  if (musicActive) {
+    // Derive 4 bands from 3 inputs (low-mid = avg of bass+mid, high-mid = avg of mid+treble)
+    uint8_t bands[4] = {
+      musicBass,
+      (uint8_t)(((uint16_t)musicBass + musicMid) / 2),
+      (uint8_t)(((uint16_t)musicMid + musicTreble) / 2),
+      musicTreble
+    };
+    const RgbColor bandColors[4] = {
+      RgbColor(br, 0, 0),         // Bass: red
+      RgbColor(br, br * 3/4, 0),  // Low-mid: yellow-orange
+      RgbColor(0, br, 0),         // High-mid: green
+      RgbColor(0, br / 4, br)     // Treble: blue
+    };
+
+    for (int s = 0; s < STRIPS; s++) {
+      uint8_t fillCount = (uint16_t)bands[s] * LEDS_PER_STRIP / 255;
+      for (int i = 0; i < LEDS_PER_STRIP; i++) {
+        int pix = s * LEDS_PER_STRIP + i;
+        if (i < fillCount) {
+          // Scale color by energy
+          uint8_t scale = bands[s];
+          RgbColor base = bandColors[s];
+          RgbColor c((uint8_t)((uint16_t)base.R * scale / 255),
+                     (uint8_t)((uint16_t)base.G * scale / 255),
+                     (uint8_t)((uint16_t)base.B * scale / 255));
+          strip.SetPixelColor(pix, c);
+        } else {
+          strip.SetPixelColor(pix, RgbColor(0));
+        }
+      }
+    }
+    showStrip();
+  } else {
+    patStrips(br);  // Fallback: static strip colors
+  }
+}
+
+// ============================================================
+// Music Pattern: Color Pulse
+// ============================================================
+// Smooth hue cycling with big hue jump on beats. Lava-lamp feel.
+// All LEDs same color, intensity modulated by overall energy.
+void patColorPulse(int br) {
+  unsigned long now = millis();
+  if (now - lastPat < 33) return;  // 30fps
+  lastPat = now;
+
+  if (musicActive) {
+    // Hue advances slowly, big jump on beat
+    hueAngle = (hueAngle + 2) % 1536;
+    if (musicBeat) hueAngle = (hueAngle + 256) % 1536;
+
+    // Overall energy for brightness modulation
+    uint8_t energy = (uint8_t)(((uint16_t)musicBass + musicMid + musicTreble) / 3);
+    uint8_t val = (uint8_t)((uint16_t)br * energy / 255);
+    val = val < br / 5 ? br / 5 : val;  // Minimum 20% brightness
+
+    // HSV to RGB (hue 0-1535, sat=255, val=val)
+    uint8_t sector = hueAngle / 256;
+    uint8_t frac = hueAngle % 256;
+    uint8_t q = (uint8_t)((uint16_t)val * (255 - frac) / 255);
+    uint8_t t = (uint8_t)((uint16_t)val * frac / 255);
+    RgbColor c;
+    switch (sector) {
+      case 0: c = RgbColor(val, t, 0);   break;
+      case 1: c = RgbColor(q, val, 0);   break;
+      case 2: c = RgbColor(0, val, t);   break;
+      case 3: c = RgbColor(0, q, val);   break;
+      case 4: c = RgbColor(t, 0, val);   break;
+      default: c = RgbColor(val, 0, q);  break;
+    }
+    for (int i = 0; i < PIXEL_COUNT; i++) strip.SetPixelColor(i, c);
+    showStrip();
+  } else {
+    // Fallback: slow color cycling (no music)
+    hueAngle = (hueAngle + 1) % 1536;
+    uint8_t sector = hueAngle / 256;
+    uint8_t frac = hueAngle % 256;
+    uint8_t v = br / 2;  // Half brightness for ambient
+    uint8_t q = (uint8_t)((uint16_t)v * (255 - frac) / 255);
+    uint8_t t = (uint8_t)((uint16_t)v * frac / 255);
+    RgbColor c;
+    switch (sector) {
+      case 0: c = RgbColor(v, t, 0);   break;
+      case 1: c = RgbColor(q, v, 0);   break;
+      case 2: c = RgbColor(0, v, t);   break;
+      case 3: c = RgbColor(0, q, v);   break;
+      case 4: c = RgbColor(t, 0, v);   break;
+      default: c = RgbColor(v, 0, q);  break;
+    }
+    for (int i = 0; i < PIXEL_COUNT; i++) strip.SetPixelColor(i, c);
+    showStrip();
+    patStep++;
+  }
+}
+
+// ============================================================
 // Pattern Tick (call from loop)
 // ============================================================
 // Routes to the active pattern. Resets state on mode changes.
@@ -390,6 +541,7 @@ void tickPatterns(int br) {
     wedgePos = 0; wedgePhase = 0; wedgeShuffle();
     memset(wedgeBri, 0, sizeof(wedgeBri));
     wedgePauseStart = 0;
+    beatDecay = 0; hueAngle = 0;
     if (currentMode == MODE_OFF) clearAll();
   }
 
@@ -408,6 +560,9 @@ void tickPatterns(int br) {
     case MODE_PULSE:    patPulse(br); break;
     case MODE_STRIPS:   patStrips(br); break;
     case MODE_COLOR:    patSolid(RgbColor(customR, customG, customB)); break;
+    case MODE_BEAT_GLOW:  patBeatGlow(br); break;
+    case MODE_STRIP_SPEC: patStripSpectrum(br); break;
+    case MODE_COLOR_PULSE: patColorPulse(br); break;
     case MODE_OFF:      break;
     case MODE_COUNT:    break;  // Sentinel
   }

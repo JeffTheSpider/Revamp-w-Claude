@@ -15,8 +15,10 @@ const path = require('path');
 const fs = require('fs');
 const DeviceManager = require('./src/services/device-manager');
 const SceneManager = require('./src/services/scene-manager');
+const AudioManager = require('./src/services/audio-manager');
 const apiRoutes = require('./src/api/routes');
 const sceneRoutes = require('./src/api/scenes');
+const audioRoutes = require('./src/api/audio');
 
 // Load config
 let hubConfig = {};
@@ -75,13 +77,18 @@ const deviceManager = new DeviceManager();
 // Scene manager (save/load device state snapshots)
 const sceneManager = new SceneManager(deviceManager);
 
+// Audio manager (FFT + beat detection + UDP broadcast)
+const audioManager = new AudioManager();
+
 // Make managers available to routes
 app.set('deviceManager', deviceManager);
 app.set('sceneManager', sceneManager);
+app.set('audioManager', audioManager);
 
 // API routes
 app.use('/api', apiRoutes);
 app.use('/api/scenes', sceneRoutes);
+app.use('/api/audio', audioRoutes);
 
 // Global API error handler
 app.use('/api', (err, req, res, _next) => {
@@ -98,9 +105,10 @@ app.get('*', (req, res) => {
 wss.on('connection', (ws) => {
   console.log(`[WS] Client connected (total: ${wss.clients.size})`);
 
-  // Send current device states on connect
+  // Send current device states + audio status on connect
   const devices = deviceManager.getAll();
   ws.send(JSON.stringify({ type: 'devices', data: devices }));
+  ws.send(JSON.stringify({ type: 'audio_status', data: audioManager.getStatus() }));
 
   ws.on('message', (raw) => {
     try {
@@ -154,6 +162,20 @@ function handleWsMessage(ws, msg) {
       }
       break;
 
+    case 'audio_start':
+      audioManager.start();
+      break;
+
+    case 'audio_stop':
+      audioManager.stop();
+      break;
+
+    case 'audio_sensitivity':
+      if (msg.value !== undefined) {
+        audioManager.setSensitivity(parseFloat(msg.value));
+      }
+      break;
+
     default:
       console.log('[WS] Unknown message type:', msg.type);
   }
@@ -197,9 +219,29 @@ sceneManager.on('sceneDeleted', () => {
   broadcast({ type: 'scenes', data: sceneManager.list() });
 });
 
-// Graceful shutdown: stop cron jobs and polling
+// Broadcast audio spectrum data to PWA clients (~20Hz)
+audioManager.on('audioData', (data) => {
+  const msg = JSON.stringify({ type: 'audio_data', ...data });
+  wss.clients.forEach((client) => {
+    if (client.readyState === 1) client.send(msg);
+  });
+});
+
+audioManager.on('started', () => {
+  broadcast({ type: 'audio_status', data: audioManager.getStatus() });
+});
+
+audioManager.on('stopped', (info) => {
+  broadcast({ type: 'audio_status', data: audioManager.getStatus() });
+  if (info.reason !== 'user') {
+    console.log(`[Hub] Audio stopped: ${info.reason}${info.error ? ' - ' + info.error : ''}`);
+  }
+});
+
+// Graceful shutdown: stop cron jobs, polling, and audio
 function shutdown() {
   console.log('[Hub] Shutting down...');
+  audioManager.stop();
   sceneManager.stopAll();
   deviceManager.stop();
   server.close();

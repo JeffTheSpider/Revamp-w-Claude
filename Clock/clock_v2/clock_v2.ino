@@ -67,6 +67,41 @@ void logError(const String& msg);
 void logDebug(const String& msg);
 void displayText(const String& line1, const String& line2);
 
+// === Music Reactive (UDP receiver) ===
+WiFiUDP musicUdp;
+const unsigned int MUSIC_UDP_PORT = 4210;
+bool musicActive = false;
+unsigned long lastMusicPacket = 0;
+uint8_t musicBass = 0, musicMid = 0, musicTreble = 0;
+bool musicBeat = false;
+uint8_t musicBeatIntensity = 0;
+uint8_t musicDominant = 0; // 0=bass, 1=mid, 2=treble
+
+void tickMusicUdp() {
+  int pktSize = musicUdp.parsePacket();
+  if (pktSize < 8) return;
+  uint8_t buf[8];
+  if (musicUdp.read(buf, 8) < 8 || buf[0] != 0xBE) return;
+  musicBass = buf[1]; musicMid = buf[2]; musicTreble = buf[3];
+  musicBeat = (buf[4] == 0x01);
+  musicBeatIntensity = buf[5];
+  musicDominant = buf[6];
+  lastMusicPacket = millis();
+  musicActive = true;
+}
+
+void handleApiMusic() {
+  char json[160];
+  snprintf(json, sizeof(json),
+    "{\"active\":%s,\"bass\":%d,\"mid\":%d,\"treble\":%d,"
+    "\"beat\":%s,\"intensity\":%d,\"lastMs\":%lu}",
+    musicActive ? "true" : "false",
+    musicBass, musicMid, musicTreble,
+    musicBeat ? "true" : "false", musicBeatIntensity,
+    musicActive ? millis() - lastMusicPacket : 0UL);
+  server.send(200, "application/json", json);
+}
+
 // === Include modular headers ===
 #include "ntp_time.h"
 #include "led_patterns.h"
@@ -609,7 +644,7 @@ void handleApiStatus() {
     "\"ntpValid\":%s,"
     "\"bootCount\":%d,"
     "\"stable\":%s,"
-    "\"capabilities\":[\"color\",\"ntp\",\"oled\",\"patterns\"]}",
+    "\"capabilities\":[\"color\",\"ntp\",\"oled\",\"patterns\",\"music\"]}",
     FW_VERSION,
     safeMode ? "true" : "false",
     uptime,
@@ -1091,6 +1126,10 @@ void setup() {
     ntpBegin();
   }
 
+  // Music UDP listener
+  musicUdp.begin(MUSIC_UDP_PORT);
+  logInfo("Music UDP on port " + String(MUSIC_UDP_PORT));
+
   // NeoPixel (skip in safe mode to preserve USB recovery)
   if (!safeMode) {
     strip.Begin();
@@ -1115,6 +1154,7 @@ void setup() {
   server.on("/api/wifi/scan", handleApiWifiScan);
   server.on("/api/wifi/config", handleApiWifiConfig);
   server.on("/api/safemode", handleApiSafeMode);
+  server.on("/api/music", handleApiMusic);
   server.on("/restart", handleRestart);
   server.onNotFound(handleDashboard);
   server.begin();
@@ -1151,6 +1191,13 @@ void loop() {
 
   // NTP sync schedule
   handleNtpSync();
+
+  // Music UDP data (non-blocking check)
+  tickMusicUdp();
+  if (musicActive && millis() - lastMusicPacket > 3000) {
+    musicActive = false;
+    musicBass = 0; musicMid = 0; musicTreble = 0; musicBeat = false;
+  }
 
   // LED patterns + OLED update (skip during OTA or safe mode)
   if (!safeMode && !otaInProgress) {

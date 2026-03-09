@@ -54,6 +54,9 @@ enum LedMode : uint8_t {
   MODE_WAVE,       // Blue-cyan wave
   MODE_SPARKLE,    // White sparkle with fade
   MODE_COLOR,      // Custom RGB color (set via API)
+  MODE_BEAT_PULSE, // Music: flash on bass beat
+  MODE_SPECTRUM,   // Music: 3-band ring spectrum
+  MODE_BEAT_CHASE, // Music: spinning comet + beat boost
   MODE_OFF,
   MODE_COUNT
 };
@@ -62,14 +65,16 @@ enum LedMode : uint8_t {
 const char* const MODE_IDS[] = {
   "clock", "red", "green", "blue", "white",
   "special1", "wedge", "special3",
-  "rainbow", "candle", "wave", "sparkle", "color", "off"
+  "rainbow", "candle", "wave", "sparkle", "color",
+  "beat_pulse", "spectrum", "beat_chase", "off"
 };
 
 // Human-readable labels (for UI)
 const char* const MODE_LABELS[] = {
   "Clock", "Red", "Green", "Blue", "White",
   "Blue Flash", "Wedge", "Sweep",
-  "Rainbow", "Candle", "Color Wave", "Sparkle", "Custom", "Off"
+  "Rainbow", "Candle", "Color Wave", "Sparkle", "Custom",
+  "Beat Pulse", "Spectrum", "Beat Chase", "Off"
 };
 
 LedMode currentMode = MODE_CLOCK;
@@ -410,6 +415,179 @@ void patSparkle(int br) {
 }
 
 // ============================================================
+// Music Pattern State
+// ============================================================
+// Music globals (musicBass, musicMid, etc.) are in clock_v2.ino
+extern bool musicActive;
+extern uint8_t musicBass, musicMid, musicTreble;
+extern bool musicBeat;
+extern uint8_t musicBeatIntensity, musicDominant;
+
+uint8_t beatDecay = 0;          // Fade-out after beat flash
+uint16_t chasePos = 0;          // Beat Chase comet position (fixed-point, /256)
+uint16_t chaseSpeed = 512;      // Beat Chase speed (fixed-point, /256)
+
+// ============================================================
+// Music Pattern: Beat Pulse
+// ============================================================
+// All 60 LEDs flash on bass beats, color shifts by dominant band.
+// Smooth exponential decay between beats. Fallback: gentle sine.
+void patBeatPulse(int br) {
+  unsigned long now = millis();
+  if (now - lastPat < 25) return;  // 40fps
+  lastPat = now;
+
+  if (musicActive) {
+    // On beat: flash bright
+    if (musicBeat) {
+      beatDecay = 255;
+    }
+    // Color based on dominant band
+    RgbColor c;
+    uint8_t val = (uint8_t)((uint16_t)beatDecay * br / 255);
+    switch (musicDominant) {
+      case 0:  c = RgbColor(val, val / 4, 0);         break; // Bass: warm orange
+      case 1:  c = RgbColor(0, val, val / 3);          break; // Mid: teal
+      default: c = RgbColor(val / 2, 0, val);          break; // Treble: purple
+    }
+    for (int i = 0; i < PIXEL_COUNT; i++) setPixel(i, c);
+    strip.Show();
+    // Exponential decay
+    beatDecay = beatDecay > 8 ? beatDecay - 8 - (beatDecay >> 4) : 0;
+  } else {
+    // Fallback: gentle sine pulse (warm white)
+    float phase = (float)patStep * 6.28318f / 90.0f;
+    uint8_t val = (uint8_t)((sinf(phase) * 0.4f + 0.6f) * br);
+    RgbColor c(val, val * 85 / 100, val * 65 / 100);
+    for (int i = 0; i < PIXEL_COUNT; i++) setPixel(i, c);
+    strip.Show();
+    patStep++;
+  }
+}
+
+// ============================================================
+// Music Pattern: Spectrum Ring
+// ============================================================
+// 60 LEDs / 3 = 20 per band. Bass=red, Mid=green, Treble=blue.
+// LEDs fill proportionally to band energy. Fallback: rainbow.
+void patSpectrum(int br) {
+  unsigned long now = millis();
+  if (now - lastPat < 33) return;  // 30fps
+  lastPat = now;
+
+  if (musicActive) {
+    // How many LEDs to light in each 20-LED band
+    uint8_t bassLeds = (uint16_t)musicBass * 20 / 255;
+    uint8_t midLeds  = (uint16_t)musicMid  * 20 / 255;
+    uint8_t trebLeds = (uint16_t)musicTreble * 20 / 255;
+
+    for (int i = 0; i < PIXEL_COUNT; i++) {
+      RgbColor c(0);
+      if (i < 20) {
+        // Bass section (LEDs 0-19): red
+        if (i < bassLeds) {
+          uint8_t v = (uint8_t)((uint16_t)br * musicBass / 255);
+          c = RgbColor(v, v / 6, 0);
+        }
+      } else if (i < 40) {
+        // Mid section (LEDs 20-39): green
+        int j = i - 20;
+        if (j < midLeds) {
+          uint8_t v = (uint8_t)((uint16_t)br * musicMid / 255);
+          c = RgbColor(0, v, v / 6);
+        }
+      } else {
+        // Treble section (LEDs 40-59): blue
+        int j = i - 40;
+        if (j < trebLeds) {
+          uint8_t v = (uint8_t)((uint16_t)br * musicTreble / 255);
+          c = RgbColor(v / 6, 0, v);
+        }
+      }
+      setPixel(i, c);
+    }
+    strip.Show();
+  } else {
+    // Fallback: slow rainbow
+    patRainbow(br);
+  }
+}
+
+// ============================================================
+// Music Pattern: Beat Chase
+// ============================================================
+// Spinning rainbow comet. Speed scales with bass energy,
+// big speed boost on beat. Trail length scales with intensity.
+void patBeatChase(int br) {
+  unsigned long now = millis();
+  if (now - lastPat < 25) return;  // 40fps
+  lastPat = now;
+
+  if (musicActive) {
+    // Speed: base + bass-proportional + beat burst
+    uint16_t targetSpeed = 256 + (uint16_t)musicBass * 4;
+    if (musicBeat) targetSpeed += 2048;
+    // Smooth toward target
+    if (chaseSpeed < targetSpeed) chaseSpeed += (targetSpeed - chaseSpeed) / 4 + 1;
+    else chaseSpeed -= (chaseSpeed - targetSpeed) / 8 + 1;
+
+    // Advance position (fixed-point /256, wraps at PIXEL_COUNT*256)
+    chasePos = (chasePos + chaseSpeed / 16) % (PIXEL_COUNT * 256);
+    uint8_t headPix = chasePos / 256;
+
+    // Trail length: 3-12 based on intensity
+    uint8_t trail = 3 + (uint16_t)musicBeatIntensity * 9 / 255;
+
+    // Draw comet with rainbow hue at head
+    for (int i = 0; i < PIXEL_COUNT; i++) {
+      // Distance from head (wrapping)
+      int dist = (headPix - i + PIXEL_COUNT) % PIXEL_COUNT;
+      if (dist < trail) {
+        float fade = 1.0f - (float)dist / trail;
+        fade = fade * fade;  // Quadratic falloff
+        // Rainbow hue based on position
+        float hue = (float)((i + patStep / 3) % PIXEL_COUNT) / PIXEL_COUNT;
+        float h6 = hue * 6.0f;
+        int sector = (int)h6;
+        float frac = h6 - sector;
+        uint8_t v = (uint8_t)(br * fade);
+        uint8_t q = (uint8_t)(v * (1.0f - frac));
+        uint8_t t = (uint8_t)(v * frac);
+        RgbColor c;
+        switch (sector % 6) {
+          case 0: c = RgbColor(v, t, 0); break;
+          case 1: c = RgbColor(q, v, 0); break;
+          case 2: c = RgbColor(0, v, t); break;
+          case 3: c = RgbColor(0, q, v); break;
+          case 4: c = RgbColor(t, 0, v); break;
+          default: c = RgbColor(v, 0, q); break;
+        }
+        setPixel(i, c);
+      } else {
+        setPixel(i, RgbColor(0));
+      }
+    }
+    strip.Show();
+    patStep++;
+  } else {
+    // Fallback: slow comet (no beat, fixed speed)
+    chasePos = (chasePos + 128) % (PIXEL_COUNT * 256);
+    uint8_t headPix = chasePos / 256;
+    for (int i = 0; i < PIXEL_COUNT; i++) {
+      int dist = (headPix - i + PIXEL_COUNT) % PIXEL_COUNT;
+      if (dist < 6) {
+        float fade = 1.0f - (float)dist / 6.0f;
+        uint8_t v = (uint8_t)(br * fade * fade);
+        setPixel(i, RgbColor(v, v / 2, 0));  // Warm amber
+      } else {
+        setPixel(i, RgbColor(0));
+      }
+    }
+    strip.Show();
+  }
+}
+
+// ============================================================
 // Pattern Tick (call from loop)
 // ============================================================
 // Routes to the active pattern. Resets state on mode changes.
@@ -420,6 +598,7 @@ void tickPatterns(int br) {
     wedgePos = 0; wedgePhase = 0; wedgeShuffle();
     memset(wedgeBri, 0, sizeof(wedgeBri));
     wedgePauseStart = 0;
+    beatDecay = 0; chasePos = 0; chaseSpeed = 512;
     if (currentMode == MODE_OFF) clearAll();
   }
 
@@ -439,6 +618,9 @@ void tickPatterns(int br) {
     case MODE_WAVE:     patWave(br); break;
     case MODE_SPARKLE:  patSparkle(br); break;
     case MODE_COLOR:    patSolid(RgbColor(customR, customG, customB)); break;
+    case MODE_BEAT_PULSE: patBeatPulse(br); break;
+    case MODE_SPECTRUM:   patSpectrum(br); break;
+    case MODE_BEAT_CHASE: patBeatChase(br); break;
     case MODE_OFF:      break;
     case MODE_COUNT:    break;  // Sentinel, not a real mode
   }
