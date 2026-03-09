@@ -6,38 +6,41 @@ Three subsystems: Clock (ESP8266), Lamp (ESP8266), and Hub (Node.js) forming a u
 
 ## Projects
 
-### Clock ("Charlie's Mirror") - FIRMWARE v2.7.0
+### Clock ("Charlie's Mirror") - FIRMWARE v2.8.0
 - **Hardware**: ESP8266 (NodeMCU LoLin v2), 60x WS2812B NeoPixel ring, SSD1306 1.3" OLED
-- **Firmware**: `Clock/clock_v2/` - OTA, safe mode, watchdog, telnet, NTP, 22 LED patterns (music + ambient), web dashboard
+- **Firmware**: `Clock/clock_v2/` - OTA, safe mode, watchdog, telnet, NTP, 22 LED patterns (music + ambient), notification overlay, web dashboard
 - **Wiring**: ALL SOLDERED - GPIO0=OLED SDA, GPIO2=OLED SCL, GPIO3=NeoPixel DMA
 - **Network**: Static IP 192.168.0.201, mDNS mirror.local, SoftAP fallback
 - **LEDs**: All 60 active (previously 0, 55-59 were wrongly masked as dead)
-- **Capabilities**: color, ntp, oled, patterns, music, ambient (reported in /api/status)
+- **Capabilities**: color, ntp, oled, patterns, music, ambient, notify (reported in /api/status)
+- **Notify**: `/api/notify` overlay (flash/pulse/strobe), auto-revert, priority system
 - **Music**: UDP listener on port 4210, 3 patterns (Beat Pulse, Spectrum Ring, Beat Chase)
 - **Ambient**: 5 patterns (Daylight NTP-driven, Sunrise 30min ramp, Fireplace, Ocean, Forest)
 - **Libraries**: NeoPixelBus (DMA), ESP8266 SSD1306 (ThingPulse), TelnetStream, NTPClient, TimeLib, Timezone
 - **Original code**: `Clock/Original Code/clock_original.ino` (reference only)
 
-### Lamp ("Charlie's Lamp") - FIRMWARE v1.3.0
+### Lamp ("Charlie's Lamp") - FIRMWARE v1.4.0
 - **Hardware**: ESP8266EX (NodeMCU), 24x WS2812B (4 strips x 6 LEDs), embedded under resin
-- **Firmware**: `Lamp/lamp_v1/` - OTA, safe mode, watchdog, telnet, 21 LED patterns (music + ambient), morse code, web dashboard
+- **Firmware**: `Lamp/lamp_v1/` - OTA, safe mode, watchdog, telnet, 21 LED patterns (music + ambient), notification overlay, morse code, web dashboard
 - **Wiring**: 4 strips on separate GPIOs: GPIO2=strip1(top), GPIO4=strip2, GPIO5=strip3, GPIO0=strip4(bottom)
 - **Network**: Static IP 192.168.0.202, mDNS lamp.local, SoftAP fallback
-- **Capabilities**: color, morse, patterns, music, ambient (reported in /api/status)
+- **Capabilities**: color, morse, patterns, music, ambient, notify (reported in /api/status)
+- **Notify**: `/api/notify` overlay (flash/pulse/strobe), auto-revert, priority system
 - **Music**: UDP listener on port 4210, 3 patterns (Beat Glow, Strip Spectrum, Color Pulse)
 - **Ambient**: 5 patterns (Daylight Hub-driven via /api/kelvin, Sunrise, Fireplace, Ocean, Forest)
 - **Libraries**: NeoPixelBus (BitBang, DMA broken on this chip), TelnetStream
 - **Serial**: Available (LEDs not on GPIO3/RX). Telnet also available.
 - **Morse**: `morse.h` - non-blocking state machine, ITU timing, A-Z/0-9, adjustable WPM
 
-### Hub - FUNCTIONAL (Phase 8 complete)
+### Hub - FUNCTIONAL (Phase 9 complete)
 - **Stack**: Node.js + Express + WebSocket
 - **Location**: `Hub/`
 - **Config**: `Hub/config.json` - device list, polling intervals, port
-- **Features**: Device discovery, REST proxy, PWA (Catppuccin Mocha), scenes + scheduling, morse code UI, color temperature, rate limiting, music reactive, ambient/circadian
+- **Features**: Device discovery, REST proxy, PWA (Catppuccin Mocha), scenes + scheduling, morse code UI, color temperature, rate limiting, music reactive, ambient/circadian, notifications/webhooks
 - **Audio**: `Hub/src/services/audio-manager.js` - FFmpeg capture, FFT, beat detection, UDP broadcast
 - **Circadian**: `Hub/src/services/circadian-manager.js` - time-of-day Kelvin, sunrise alarm scheduling
-- **Service Worker**: Network-first strategy (v11), bump version when changing JS/HTML
+- **Notifications**: `Hub/src/services/notification-manager.js` - webhook endpoint, profiles, weather integration
+- **Service Worker**: Network-first strategy (v12), bump version when changing JS/HTML
 - **Run**: `cd Hub && npm start` (port 3000)
 
 ## Development Environment

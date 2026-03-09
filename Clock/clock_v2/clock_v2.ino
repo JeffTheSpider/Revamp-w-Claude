@@ -1,8 +1,8 @@
 // ============================================================
-// Charlie's Mirror v2.7.0 - Ambient Lighting
+// Charlie's Mirror v2.8.0 - Notifications
 // ============================================================
 // Complete firmware: OTA, safe mode, watchdog, telnet logging,
-// NTP clock, 22 LED modes (music + ambient), web dashboard.
+// NTP clock, 22 LED modes (music + ambient), notification overlay, web dashboard.
 //
 // Hardware (soldered wiring - cannot change):
 //   NeoPixel: GPIO3 (RX) via DMA/I2S - glitch-free, hardware-driven
@@ -13,7 +13,7 @@
 // Safe mode skips NeoPixel init so USB recovery still works.
 // ============================================================
 
-#define FW_VERSION "2.7.0"
+#define FW_VERSION "2.8.0"
 
 #include <ESP8266WiFi.h>
 #include <ESP8266mDNS.h>
@@ -105,6 +105,7 @@ void handleApiMusic() {
 // === Include modular headers ===
 #include "ntp_time.h"
 #include "led_patterns.h"
+#include "notify.h"
 
 // === NTP Sync Tracking ===
 unsigned long lastNtpSync = 0;
@@ -618,6 +619,39 @@ void handleDashboard() {
 }
 
 // ============================================================
+// Web Server - Notification Trigger (GET /api/notify)
+// ============================================================
+void handleApiNotify() {
+  if (safeMode) {
+    server.send(503, "application/json", "{\"ok\":false,\"reason\":\"safe mode\"}");
+    return;
+  }
+  uint8_t r = server.hasArg("r") ? server.arg("r").toInt() : 255;
+  uint8_t g = server.hasArg("g") ? server.arg("g").toInt() : 0;
+  uint8_t b = server.hasArg("b") ? server.arg("b").toInt() : 0;
+  uint16_t dur = server.hasArg("duration") ? server.arg("duration").toInt() : 3000;
+  uint8_t pri = server.hasArg("priority") ? server.arg("priority").toInt() : 2;
+  // Pattern: flash=0, pulse=1, strobe=2
+  uint8_t pat = NOTIFY_FLASH;
+  if (server.hasArg("pattern")) {
+    String p = server.arg("pattern");
+    if (p == "pulse") pat = NOTIFY_PULSE;
+    else if (p == "strobe") pat = NOTIFY_STROBE;
+  }
+  // Clamp duration to 30s max
+  if (dur > 30000) dur = 30000;
+  if (pri < 1) pri = 1;
+  if (pri > 3) pri = 3;
+  notifyStart(r, g, b, pat, dur, pri);
+  char json[128];
+  snprintf(json, sizeof(json),
+    "{\"ok\":true,\"pattern\":\"%s\",\"duration\":%d,\"priority\":%d}",
+    pat == NOTIFY_PULSE ? "pulse" : (pat == NOTIFY_STROBE ? "strobe" : "flash"),
+    dur, pri);
+  server.send(200, "application/json", json);
+}
+
+// ============================================================
 // Web Server - JSON Status (GET /api/status)
 // ============================================================
 void handleApiStatus() {
@@ -625,7 +659,7 @@ void handleApiStatus() {
   // Store IP string before snprintf to avoid dangling pointer
   // (WiFi.localIP().toString() returns a temporary String)
   String ipStr = WiFi.localIP().toString();
-  char json[560];
+  char json[600];
   snprintf(json, sizeof(json),
     "{\"device\":\"mirror\","
     "\"version\":\"%s\","
@@ -644,7 +678,8 @@ void handleApiStatus() {
     "\"ntpValid\":%s,"
     "\"bootCount\":%d,"
     "\"stable\":%s,"
-    "\"capabilities\":[\"color\",\"ntp\",\"oled\",\"patterns\",\"music\",\"ambient\"]}",
+    "\"notifying\":%s,"
+    "\"capabilities\":[\"color\",\"ntp\",\"oled\",\"patterns\",\"music\",\"ambient\",\"notify\"]}",
     FW_VERSION,
     safeMode ? "true" : "false",
     uptime,
@@ -658,7 +693,8 @@ void handleApiStatus() {
     customR, customG, customB,
     isTimeValid() ? "true" : "false",
     lastBootCount,
-    stabilityConfirmed ? "true" : "false");
+    stabilityConfirmed ? "true" : "false",
+    notifyIsActive() ? "true" : "false");
   server.send(200, "application/json", json);
 }
 
@@ -1155,6 +1191,7 @@ void setup() {
   server.on("/api/wifi/config", handleApiWifiConfig);
   server.on("/api/safemode", handleApiSafeMode);
   server.on("/api/music", handleApiMusic);
+  server.on("/api/notify", handleApiNotify);
   server.on("/restart", handleRestart);
   server.onNotFound(handleDashboard);
   server.begin();
@@ -1201,7 +1238,10 @@ void loop() {
 
   // LED patterns + OLED update (skip during OTA or safe mode)
   if (!safeMode && !otaInProgress) {
-    tickPatterns(Brightness);
+    // Notification overlay takes priority over regular patterns
+    if (!notifyTick(Brightness)) {
+      tickPatterns(Brightness);
+    }
     handleOledUpdate();
   }
 

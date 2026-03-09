@@ -1,10 +1,10 @@
 // ============================================================
-// Charlie's Lamp v1.3.0 - Ambient Lighting
+// Charlie's Lamp v1.4.0 - Notifications
 // ============================================================
 // Firmware for 4-strip resin LED lamp (24x WS2812B).
 // Safety architecture mirrors Charlie's Mirror (clock):
 //   OTA, safe mode, watchdog, telnet logging, web dashboard.
-// Music reactive + ambient: 21 LED modes total.
+// Music reactive + ambient + notification overlay: 21 LED modes total.
 //
 // Hardware:
 //   NeoPixel: 4 strips on separate GPIOs (2,4,5,0) via BitBang
@@ -15,7 +15,7 @@
 // Safe mode skips NeoPixel init so USB recovery still works.
 // ============================================================
 
-#define FW_VERSION "1.3.0"
+#define FW_VERSION "1.4.0"
 
 #include <ESP8266WiFi.h>
 #include <ESP8266mDNS.h>
@@ -97,6 +97,7 @@ void handleApiMusic() {
 
 // === Include modular headers ===
 #include "led_patterns.h"
+#include "notify.h"
 #include "morse.h"
 
 // === EEPROM Debounce ===
@@ -583,6 +584,37 @@ void handleDashboard() {
 }
 
 // ============================================================
+// Web Server - Notification Trigger (GET /api/notify)
+// ============================================================
+void handleApiNotify() {
+  if (safeMode) {
+    server.send(503, "application/json", "{\"ok\":false,\"reason\":\"safe mode\"}");
+    return;
+  }
+  uint8_t r = server.hasArg("r") ? server.arg("r").toInt() : 255;
+  uint8_t g = server.hasArg("g") ? server.arg("g").toInt() : 0;
+  uint8_t b = server.hasArg("b") ? server.arg("b").toInt() : 0;
+  uint16_t dur = server.hasArg("duration") ? server.arg("duration").toInt() : 3000;
+  uint8_t pri = server.hasArg("priority") ? server.arg("priority").toInt() : 2;
+  uint8_t pat = NOTIFY_FLASH;
+  if (server.hasArg("pattern")) {
+    String p = server.arg("pattern");
+    if (p == "pulse") pat = NOTIFY_PULSE;
+    else if (p == "strobe") pat = NOTIFY_STROBE;
+  }
+  if (dur > 30000) dur = 30000;
+  if (pri < 1) pri = 1;
+  if (pri > 3) pri = 3;
+  notifyStart(r, g, b, pat, dur, pri);
+  char json[128];
+  snprintf(json, sizeof(json),
+    "{\"ok\":true,\"pattern\":\"%s\",\"duration\":%d,\"priority\":%d}",
+    pat == NOTIFY_PULSE ? "pulse" : (pat == NOTIFY_STROBE ? "strobe" : "flash"),
+    dur, pri);
+  server.send(200, "application/json", json);
+}
+
+// ============================================================
 // Web Server - JSON Status (GET /api/status)
 // ============================================================
 void handleApiStatus() {
@@ -590,7 +622,7 @@ void handleApiStatus() {
   // Store IP string before snprintf to avoid dangling pointer
   // (WiFi.localIP().toString() returns a temporary String)
   String ipStr = WiFi.localIP().toString();
-  char json[512];
+  char json[560];
   snprintf(json, sizeof(json),
     "{\"device\":\"lamp\","
     "\"version\":\"%s\","
@@ -609,7 +641,8 @@ void handleApiStatus() {
     "\"strips\":%d,"
     "\"bootCount\":%d,"
     "\"stable\":%s,"
-    "\"capabilities\":[\"color\",\"morse\",\"patterns\",\"music\",\"ambient\"]}",
+    "\"notifying\":%s,"
+    "\"capabilities\":[\"color\",\"morse\",\"patterns\",\"music\",\"ambient\",\"notify\"]}",
     FW_VERSION,
     safeMode ? "true" : "false",
     uptime,
@@ -624,7 +657,8 @@ void handleApiStatus() {
     PIXEL_COUNT,
     STRIPS,
     lastBootCount,
-    stabilityConfirmed ? "true" : "false");
+    stabilityConfirmed ? "true" : "false",
+    notifyIsActive() ? "true" : "false");
   server.send(200, "application/json", json);
 }
 
@@ -1144,6 +1178,7 @@ void setup() {
   server.on("/api/safemode", handleApiSafeMode);
   server.on("/api/pinscan", handleApiPinScan);
   server.on("/api/music", handleApiMusic);
+  server.on("/api/notify", handleApiNotify);
   server.onNotFound(handleDashboard);
   server.begin();
   logInfo("Web server started on port 80");
@@ -1188,8 +1223,11 @@ void loop() {
   }
 
   // LED patterns (skip during OTA or safe mode)
+  // Priority: notification overlay > morse > regular patterns
   if (!safeMode && !otaInProgress) {
-    if (morseIsPlaying()) {
+    if (notifyTick(Brightness)) {
+      // Notification overlay active — skip everything else
+    } else if (morseIsPlaying()) {
       morseTick();  // Morse overrides patterns while active
     } else {
       tickPatterns(Brightness);

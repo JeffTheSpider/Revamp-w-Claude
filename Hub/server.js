@@ -17,10 +17,12 @@ const DeviceManager = require('./src/services/device-manager');
 const SceneManager = require('./src/services/scene-manager');
 const AudioManager = require('./src/services/audio-manager');
 const CircadianManager = require('./src/services/circadian-manager');
+const NotificationManager = require('./src/services/notification-manager');
 const apiRoutes = require('./src/api/routes');
 const sceneRoutes = require('./src/api/scenes');
 const audioRoutes = require('./src/api/audio');
 const circadianRoutes = require('./src/api/circadian');
+const notificationRoutes = require('./src/api/notifications');
 
 // Load config
 let hubConfig = {};
@@ -85,17 +87,22 @@ const audioManager = new AudioManager();
 // Circadian manager (time-of-day color temperature + sunrise alarms)
 const circadianManager = new CircadianManager(deviceManager);
 
+// Notification manager (webhooks, profiles, weather)
+const notificationManager = new NotificationManager(deviceManager);
+
 // Make managers available to routes
 app.set('deviceManager', deviceManager);
 app.set('sceneManager', sceneManager);
 app.set('audioManager', audioManager);
 app.set('circadianManager', circadianManager);
+app.set('notificationManager', notificationManager);
 
 // API routes
 app.use('/api', apiRoutes);
 app.use('/api/scenes', sceneRoutes);
 app.use('/api/audio', audioRoutes);
 app.use('/api/circadian', circadianRoutes);
+app.use('/api', notificationRoutes);
 
 // Global API error handler
 app.use('/api', (err, req, res, _next) => {
@@ -117,6 +124,7 @@ wss.on('connection', (ws) => {
   ws.send(JSON.stringify({ type: 'devices', data: devices }));
   ws.send(JSON.stringify({ type: 'audio_status', data: audioManager.getStatus() }));
   ws.send(JSON.stringify({ type: 'circadian_status', data: circadianManager.getStatus() }));
+  ws.send(JSON.stringify({ type: 'notification_status', data: notificationManager.getStatus() }));
 
   ws.on('message', (raw) => {
     try {
@@ -204,6 +212,23 @@ function handleWsMessage(ws, msg) {
       }
       break;
 
+    case 'notification_test':
+      notificationManager.notify({
+        title: 'Test', message: 'Test notification',
+        color: { r: 0, g: 255, b: 100 }, pattern: 'flash', duration: 3000, priority: 2
+      }).catch(() => {});
+      break;
+
+    case 'notification_send':
+      if (msg.config) {
+        notificationManager.notify(msg.config).catch(() => {});
+      }
+      break;
+
+    case 'weather_notify':
+      notificationManager.weatherNotify().catch(() => {});
+      break;
+
     default:
       console.log('[WS] Unknown message type:', msg.type);
   }
@@ -283,11 +308,21 @@ circadianManager.on('alarmSet', () => {
   broadcast({ type: 'circadian_status', data: circadianManager.getStatus() });
 });
 
+// Broadcast notification events
+notificationManager.on('notificationSent', (entry) => {
+  broadcast({ type: 'notification_sent', data: entry });
+  broadcast({ type: 'notification_status', data: notificationManager.getStatus() });
+});
+notificationManager.on('weatherUpdate', (data) => {
+  broadcast({ type: 'weather_update', data });
+});
+
 // Graceful shutdown: stop cron jobs, polling, and audio
 function shutdown() {
   console.log('[Hub] Shutting down...');
   audioManager.stop();
   circadianManager.stop();
+  notificationManager.stop();
   sceneManager.stopAll();
   deviceManager.stop();
   server.close();

@@ -5,7 +5,7 @@
 // network-first (device status must be live).
 // ============================================================
 
-const CACHE_NAME = 'revamp-hub-v11';
+const CACHE_NAME = 'revamp-hub-v12';
 const APP_SHELL = [
   '/',
   '/index.html',

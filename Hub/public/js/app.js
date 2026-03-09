@@ -105,6 +105,16 @@ function handleMessage(msg) {
     case 'sunrise_triggered':
       showToast('Sunrise alarm triggered! (' + msg.alarm + ')', 'info');
       break;
+    case 'notification_status':
+      updateNotificationUI(msg.data);
+      break;
+    case 'notification_sent':
+      addNotificationToHistory(msg.data);
+      showToast('Notification: ' + (msg.data.title || 'Sent'), 'info');
+      break;
+    case 'weather_update':
+      updateWeatherDisplay(msg.data);
+      break;
     case 'error':
       showToast(msg.message || 'An error occurred', 'error');
       break;
@@ -1158,6 +1168,12 @@ function updateAudioVisibility() {
     const hasAmbient = devices.some(d => d.online && d.capabilities && d.capabilities.includes('ambient'));
     ambientSection.style.display = hasAmbient ? '' : 'none';
   }
+  // Show notifications section when any device has notify capability
+  const notifySection = document.getElementById('notify-section');
+  if (notifySection) {
+    const hasNotify = devices.some(d => d.online && d.capabilities && d.capabilities.includes('notify'));
+    notifySection.style.display = hasNotify ? '' : 'none';
+  }
 }
 
 // ---- Circadian / Ambient ----
@@ -1223,6 +1239,133 @@ function setAllPattern(patternId) {
   }).catch(() => {
     showToast('Failed to set pattern', 'error');
   });
+}
+
+// ---- Notifications ----
+
+let notifyApiKey = '';
+
+function updateNotificationUI(data) {
+  if (!data) return;
+  notifyApiKey = data.apiKey || '';
+  // Update webhook URL display
+  const urlEl = document.getElementById('webhook-url');
+  if (urlEl) {
+    const host = window.location.hostname + ':' + window.location.port;
+    urlEl.textContent = 'POST http://' + host + '/api/notify?key=' + notifyApiKey;
+  }
+  // Update weather config inputs
+  if (data.weather) {
+    const cityInput = document.getElementById('weather-city');
+    const keyInput = document.getElementById('weather-key');
+    if (cityInput && data.weather.city) cityInput.value = data.weather.city;
+    if (keyInput && data.weather.hasApiKey) keyInput.placeholder = 'Key saved (hidden)';
+    if (data.weather.data) updateWeatherDisplay(data.weather.data);
+  }
+  // Update history
+  if (data.historyCount > 0) {
+    fetch('/api/notifications/history?limit=10')
+      .then(r => r.json())
+      .then(history => renderNotificationHistory(history))
+      .catch(() => {});
+  }
+}
+
+function sendTestNotification() {
+  if (!ws || ws.readyState !== 1) return;
+  ws.send(JSON.stringify({ type: 'notification_test' }));
+}
+
+function sendQuickNotify(profileName) {
+  if (!ws || ws.readyState !== 1) return;
+  ws.send(JSON.stringify({ type: 'notification_send', config: { profile: profileName } }));
+}
+
+function copyWebhookUrl() {
+  const urlEl = document.getElementById('webhook-url');
+  if (!urlEl) return;
+  navigator.clipboard.writeText(urlEl.textContent).then(() => {
+    showToast('Webhook URL copied', 'info');
+  }).catch(() => {
+    showToast('Copy failed', 'error');
+  });
+}
+
+function saveWeatherConfig() {
+  const city = document.getElementById('weather-city').value.trim();
+  const apiKey = document.getElementById('weather-key').value.trim();
+  if (!city) { showToast('Enter a city name', 'error'); return; }
+  const config = { weather: { city } };
+  if (apiKey) config.weather.apiKey = apiKey;
+  fetch('/api/notifications/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(config)
+  }).then(r => r.json()).then(data => {
+    showToast('Weather config saved for ' + city, 'info');
+    // Start weather polling if API key is configured
+    if (apiKey || document.getElementById('weather-key').placeholder.includes('saved')) {
+      fetch('/api/notifications/weather/start', { method: 'POST' })
+        .then(r => r.json())
+        .then(r => { if (r.ok) showToast('Weather polling started', 'info'); })
+        .catch(() => {});
+    }
+  }).catch(() => showToast('Failed to save weather config', 'error'));
+}
+
+function updateWeatherDisplay(data) {
+  if (!data) return;
+  const container = document.getElementById('weather-display');
+  const tempEl = document.getElementById('weather-temp');
+  const condEl = document.getElementById('weather-cond');
+  const detailEl = document.getElementById('weather-detail');
+  if (container) container.style.display = '';
+  if (tempEl) tempEl.textContent = data.temp + '\u00B0C';
+  if (condEl) condEl.textContent = data.condition + ' - ' + data.city;
+  if (detailEl) detailEl.textContent = data.description + ' | ' +
+    data.humidity + '% humidity | wind ' + data.wind + ' m/s';
+}
+
+function triggerWeatherNotify() {
+  if (!ws || ws.readyState !== 1) return;
+  ws.send(JSON.stringify({ type: 'weather_notify' }));
+}
+
+function addNotificationToHistory(entry) {
+  fetch('/api/notifications/history?limit=10')
+    .then(r => r.json())
+    .then(history => renderNotificationHistory(history))
+    .catch(() => {});
+}
+
+function renderNotificationHistory(history) {
+  const container = document.getElementById('notify-history');
+  if (!container || !Array.isArray(history) || history.length === 0) return;
+  // Clear using safe DOM method
+  while (container.firstChild) container.removeChild(container.firstChild);
+  for (const entry of history) {
+    const item = document.createElement('div');
+    item.className = 'notify-history-item';
+
+    const dot = document.createElement('div');
+    dot.className = 'notify-color-dot';
+    const c = entry.color || { r: 200, g: 200, b: 200 };
+    dot.style.background = 'rgb(' + c.r + ',' + c.g + ',' + c.b + ')';
+
+    const title = document.createElement('span');
+    title.className = 'notify-history-title';
+    title.textContent = entry.title || 'Notification';
+
+    const time = document.createElement('span');
+    time.className = 'notify-history-time';
+    const d = new Date(entry.timestamp);
+    time.textContent = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    item.appendChild(dot);
+    item.appendChild(title);
+    item.appendChild(time);
+    container.appendChild(item);
+  }
 }
 
 // ---- Start ----
