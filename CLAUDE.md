@@ -6,29 +6,32 @@ Three subsystems: Clock (ESP8266), Lamp (ESP8266), and Hub (Node.js) forming a u
 
 ## Projects
 
-### Clock ("Charlie's Mirror") - FIRMWARE COMPLETE (v2.4.0)
+### Clock ("Charlie's Mirror") - FIRMWARE v2.5.0
 - **Hardware**: ESP8266 (NodeMCU LoLin v2), 60x WS2812B NeoPixel ring, SSD1306 1.3" OLED
-- **Firmware**: `Clock/clock_v2/` - OTA, safe mode, watchdog, telnet, NTP, 13 LED patterns, web dashboard
+- **Firmware**: `Clock/clock_v2/` - OTA, safe mode, watchdog, telnet, NTP, 14 LED patterns, web dashboard
 - **Wiring**: ALL SOLDERED - GPIO0=OLED SDA, GPIO2=OLED SCL, GPIO3=NeoPixel DMA
 - **Network**: Static IP 192.168.0.201, mDNS mirror.local, SoftAP fallback
-- **Dead LEDs**: 0, 55-59 (6 dead), LED 54 degraded (yellow tint)
+- **LEDs**: All 60 active (previously 0, 55-59 were wrongly masked as dead)
+- **Capabilities**: color, ntp, oled, patterns (reported in /api/status)
 - **Libraries**: NeoPixelBus (DMA), ESP8266 SSD1306 (ThingPulse), TelnetStream, NTPClient, TimeLib, Timezone
 - **Original code**: `Clock/Original Code/clock_original.ino` (reference only)
 
-### Lamp ("Charlie's Lamp") - FIRMWARE COMPLETE (v1.0.0 + morse)
+### Lamp ("Charlie's Lamp") - FIRMWARE v1.1.0
 - **Hardware**: ESP8266EX (NodeMCU), 24x WS2812B (4 strips x 6 LEDs), embedded under resin
-- **Firmware**: `Lamp/lamp_v1/` - OTA, safe mode, watchdog, telnet, 12 LED patterns, morse code, web dashboard
-- **Wiring**: GPIO3=NeoPixel DMA (same as clock), GPIO0=FLASH button
+- **Firmware**: `Lamp/lamp_v1/` - OTA, safe mode, watchdog, telnet, 13 LED patterns, morse code, web dashboard
+- **Wiring**: 4 strips on separate GPIOs: GPIO2=strip1(top), GPIO4=strip2, GPIO5=strip3, GPIO0=strip4(bottom)
 - **Network**: Static IP 192.168.0.202, mDNS lamp.local, SoftAP fallback
-- **Libraries**: NeoPixelBus (DMA), TelnetStream
-- **Serial**: DISABLED (DMA conflicts with GPIO3/RX) - use Telnet instead
+- **Capabilities**: color, morse, patterns (reported in /api/status)
+- **Libraries**: NeoPixelBus (BitBang, DMA broken on this chip), TelnetStream
+- **Serial**: Available (LEDs not on GPIO3/RX). Telnet also available.
 - **Morse**: `morse.h` - non-blocking state machine, ITU timing, A-Z/0-9, adjustable WPM
 
-### Hub - FUNCTIONAL (Phase 6c + morse UI)
+### Hub - FUNCTIONAL (Phase 6 + improvement sprint)
 - **Stack**: Node.js + Express + WebSocket
 - **Location**: `Hub/`
-- **Features**: Device discovery, REST proxy, PWA control panel, scenes + scheduling, morse code UI
-- **Service Worker**: Network-first strategy (v3), bump version when changing JS/HTML
+- **Config**: `Hub/config.json` - device list, polling intervals, port
+- **Features**: Device discovery, REST proxy, PWA control panel (Catppuccin Mocha theme), scenes + scheduling, morse code UI, color temperature slider, rate limiting, device ID validation
+- **Service Worker**: Network-first strategy (v9), bump version when changing JS/HTML
 - **Run**: `cd Hub && npm start` (port 3000)
 
 ## Development Environment
@@ -42,11 +45,13 @@ Three subsystems: Clock (ESP8266), Lamp (ESP8266), and Hub (Node.js) forming a u
 ## Conventions
 
 ### Arduino/ESP
-- Always prefix with: `export PATH="$HOME/bin:$PATH"`
-- Compile: `arduino-cli compile --fqbn esp8266:esp8266:nodemcuv2 --output-dir "D:/Revamp w Claude/Clock/clock_v2/build" "D:/Revamp w Claude/Clock/clock_v2/"`
-- OTA upload: `cd "C:/Users/charl/AppData/Local/Arduino15/packages/esp8266/hardware/esp8266/3.1.2/tools" && python3 espota.py -i 192.168.0.201 -p 8266 -P 48266 -f "<path>/clock_v2.ino.bin" -d`
+- Compile: `"C:/Users/charl/bin/arduino-cli.exe" compile --fqbn esp8266:esp8266:nodemcuv2 --output-dir "D:/Revamp w Claude/<device>/build" "D:/Revamp w Claude/<device>/"`
+- OTA upload: `cd "C:/Users/charl/AppData/Local/Arduino15/packages/esp8266/hardware/esp8266/3.1.2/tools" && python3 espota.py -i <IP> -p 8266 -P 48266 -f "<path>.bin" -d`
+- Build scripts: `scripts/build-clock.sh`, `build-lamp.sh`, `ota-clock.sh`, `ota-lamp.sh`
 - ALWAYS compile-test before OTA upload
+- OTA uploads must be sequential (both use host port 48266 — parallel fails)
 - Serial is DISABLED on clock (DMA conflicts with GPIO3/RX) - use Telnet instead
+- Lamp serial is available (LEDs not on GPIO3) but Telnet preferred
 
 ### Code Style
 - Header files (.h) included from main .ino (single translation unit, not separate .cpp)
@@ -73,10 +78,13 @@ Lamp/lamp_v1/            # Active firmware
   build/                 # Compiled binary
 
 Hub/                     # Central control server
-  server.js              # Express + WebSocket
+  server.js              # Express + WebSocket + rate limiting
+  config.json            # Device IPs, polling, port settings
   src/services/          # Device manager, scene manager
-  src/api/               # REST routes (devices, scenes)
-  public/                # PWA frontend
+  src/api/               # REST routes (devices, scenes) + device ID validation
+  public/                # PWA frontend (Catppuccin Mocha glassmorphism)
+
+scripts/                 # Build & OTA helper scripts
 
 Shared/
   api-schema.json        # REST API contract
@@ -86,12 +94,19 @@ Clock/Original Code/     # Reference only
 ```
 
 ## Key Technical Notes
-- ESP8266 NeoPixelBus DMA is hardwired to GPIO3 - cannot be changed
-- DMA kills Serial but safe mode skips NeoPixel init for USB recovery
-- Both devices use identical DMA GPIO3 wiring (uncle built both)
+- **Clock**: NeoPixelBus DMA on GPIO3 (single 60-LED daisy chain). DMA kills Serial.
+- **Lamp**: 4 separate strips on 4 GPIOs (2,4,5,0) via BitBang. DMA broken on this chip.
+  showStrip() sends to each GPIO sequentially with fresh local NeoPixelBus per strip.
+  Pin held LOW after each send to prevent destructor pull-up interference.
+- Safe mode skips NeoPixel init for USB recovery (both devices)
 - Clock EEPROM magic: 0xC10C, Lamp EEPROM magic: 0x1A4B
 - Adaptive brightness delta: >99=step 10, >49=step 5, else=step 1
 - WiFi credentials stored in EEPROM bytes 0-63, brightness at 500, mode at 501
 - Clock face overlap: clear-then-layer approach (hour→minute→second priority)
 - WiFi provisioner sketch needed for lamp (writes EEPROM before DMA kills serial)
 - Lamp COM port may change on USB replug (was COM3, became COM6)
+- Static IP: capture gateway/subnet into local vars BEFORE calling WiFi.config()
+- WiFi.localIP().toString().c_str() is a dangling pointer — store String in local variable
+- showStrip() with CanShow()+yield() before Show() prevents BitBang LED dropout
+- OTA progress: use `progress * 100 / total` not `total/100` (div-by-zero when total < 100)
+- Firmware reports explicit capabilities array in /api/status — Hub prefers this over detection

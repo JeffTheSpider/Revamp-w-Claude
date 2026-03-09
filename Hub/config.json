@@ -1,0 +1,22 @@
+{
+  "port": 3000,
+  "devices": [
+    {
+      "id": "mirror",
+      "name": "Charlie's Mirror",
+      "hostname": "mirror.local",
+      "ip": "192.168.0.201"
+    },
+    {
+      "id": "lamp",
+      "name": "Charlie's Lamp",
+      "hostname": "lamp.local",
+      "ip": "192.168.0.202"
+    }
+  ],
+  "polling": {
+    "interval": 10000,
+    "timeout": 5000,
+    "maxBackoff": 60000
+  }
+}

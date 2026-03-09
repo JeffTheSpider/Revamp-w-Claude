@@ -39,14 +39,12 @@ class SceneManager extends EventEmitter {
     }
   }
 
-  // Save scenes to disk
+  // Save scenes to disk (async to avoid blocking event loop)
   save() {
-    try {
-      const data = { scenes: this.scenes, schedules: this.schedules };
-      fs.writeFileSync(SCENES_FILE, JSON.stringify(data, null, 2));
-    } catch (err) {
-      console.error('[SceneManager] Failed to save:', err.message);
-    }
+    const data = JSON.stringify({ scenes: this.scenes, schedules: this.schedules }, null, 2);
+    fs.writeFile(SCENES_FILE, data, (err) => {
+      if (err) console.error('[SceneManager] Failed to save:', err.message);
+    });
   }
 
   // List all scenes (includes schedule info if any)

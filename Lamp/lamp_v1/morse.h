@@ -78,6 +78,7 @@ static MorseState morseState = MORSE_IDLE;
 static unsigned long morseTimer = 0;  // When current state started
 static unsigned long morseUnitMs = 100; // Duration of 1 unit (adjustable via WPM)
 static bool morseLooping = false;     // Repeat message after done?
+static uint8_t morseMessageLen = 0;   // Cached morseMessageLen
 static RgbColor morseColor(200, 120, 0); // Warm amber default
 
 // Look up morse code string for a character
@@ -102,6 +103,7 @@ void morseStart(const char* msg, int wpm = 12, bool loop = false) {
     morseMessage[i] = c;
   }
   morseMessage[len] = '\0';
+  morseMessageLen = (uint8_t)len;
 
   // Calculate unit duration from WPM
   // Standard: "PARIS" = 50 units per word
@@ -124,6 +126,7 @@ void morseStart(const char* msg, int wpm = 12, bool loop = false) {
 void morseStop() {
   morseState = MORSE_IDLE;
   morseMessage[0] = '\0';
+  morseMessageLen = 0;
   morseLooping = false;
 }
 
@@ -137,7 +140,7 @@ static void morseSetLeds(RgbColor c) {
   for (int i = 0; i < PIXEL_COUNT; i++) {
     strip.SetPixelColor(i, c);
   }
-  strip.Show();
+  showStrip();  // Use safe wrapper (defined in led_patterns.h)
 }
 
 // Advance to next morse element/character
@@ -148,7 +151,7 @@ static void morseAdvance() {
   }
 
   // Find next character
-  while (morseCharIdx < strlen(morseMessage)) {
+  while (morseCharIdx < morseMessageLen) {
     char c = morseMessage[morseCharIdx];
 
     if (c == ' ') {
@@ -173,7 +176,7 @@ static void morseAdvance() {
       morseCharIdx++;
       morseElementIdx = 0;
       // Inter-character gap
-      if (morseCharIdx < strlen(morseMessage)) {
+      if (morseCharIdx < morseMessageLen) {
         morseState = MORSE_CHAR_GAP;
         morseTimer = millis();
         return;

@@ -1,8 +1,8 @@
 // ============================================================
-// Charlie's Mirror v2.4.0 - Phase 4: Full Feature Port
+// Charlie's Mirror v2.5.0 - Improvement Sprint
 // ============================================================
 // Complete firmware: OTA, safe mode, watchdog, telnet logging,
-// NTP clock, 13 LED modes, dead pixel handling, web dashboard.
+// NTP clock, 13 LED modes, web dashboard.
 //
 // Hardware (soldered wiring - cannot change):
 //   NeoPixel: GPIO3 (RX) via DMA/I2S - glitch-free, hardware-driven
@@ -13,7 +13,7 @@
 // Safe mode skips NeoPixel init so USB recovery still works.
 // ============================================================
 
-#define FW_VERSION "2.4.0"
+#define FW_VERSION "2.5.0"
 
 #include <ESP8266WiFi.h>
 #include <ESP8266mDNS.h>
@@ -41,6 +41,7 @@ bool safeMode = false;
 unsigned long bootTime = 0;
 unsigned long lastStableTime = 0;
 bool stabilityConfirmed = false;
+uint8_t lastBootCount = 0;
 
 // === OLED (GPIO0=SDA, GPIO2=SCL - software I2C) ===
 SSD1306 display(0x3c, PIN_OLED_SDA, PIN_OLED_SCL);
@@ -232,17 +233,20 @@ void crashCounterCheck() {
   EEPROM.begin(EEPROM_SIZE);
   uint8_t bootCount = EEPROM.read(EEPROM_BOOT_COUNT);
   if (bootCount > 10) bootCount = 0;
+  lastBootCount = bootCount;
 
   if (bootCount >= 3) {
     safeMode = true;
     EEPROM.write(EEPROM_BOOT_COUNT, 0);
-    logWarn("Boot count >= 3, forcing safe mode");
+    EEPROM.commit();
+    EEPROM.end();
+    logWarn("Boot count was " + String(bootCount) + " (>=3), forcing safe mode");
   } else {
     EEPROM.write(EEPROM_BOOT_COUNT, bootCount + 1);
-    logInfo("Boot count: " + String(bootCount + 1));
+    EEPROM.commit();
+    EEPROM.end();
+    logInfo("Boot count: " + String(bootCount) + " -> " + String(bootCount + 1) + " (safe mode at 3)");
   }
-  EEPROM.commit();
-  EEPROM.end();
 }
 
 void crashCounterClear() {
@@ -288,15 +292,20 @@ bool connectWiFi() {
   int attempts = 0;
   while (WiFi.status() != WL_CONNECTED && attempts < 30) {
     delay(500);
+    yield();  // Feed soft WDT during blocking connect
     attempts++;
   }
 
   if (WiFi.status() == WL_CONNECTED) {
+    // Capture gateway/subnet from completed DHCP before reconfiguring
+    IPAddress gw = WiFi.gatewayIP();
+    IPAddress sn = WiFi.subnetMask();
     IPAddress ip = WiFi.localIP();
     ip[3] = STATIC_IP_OCTET;
-    WiFi.config(ip, WiFi.gatewayIP(), WiFi.subnetMask());
-    delay(100);  // Allow IP change to settle
-    logInfo("WiFi connected: " + ip.toString() + " (" + String(WiFi.RSSI()) + " dBm)");
+    WiFi.config(ip, gw, sn);
+    delay(100);
+    String ipStr = WiFi.localIP().toString();
+    logInfo("WiFi connected: " + ipStr + " (" + String(WiFi.RSSI()) + " dBm)");
     return true;
   }
 
@@ -447,7 +456,7 @@ void ledStartupTest() {
     strip.SetPixelColor(i, RgbColor(Brightness));
   }
   strip.Show();
-  delay(500);
+  delay(200);
 
   // Clear
   clearAll();
@@ -568,7 +577,7 @@ void handleDashboard() {
   server.sendContent("<code style='color:#00d4ff'>telnet " + String(HOSTNAME) + ".local</code></div>");
 
   // Footer
-  server.sendContent("<p style='text-align:center;color:#555;font-size:11px'>v" + String(FW_VERSION) + " | DMA NeoPixel | " + String(PIXEL_COUNT - NUM_DEAD) + " active LEDs</p>");
+  server.sendContent("<p style='text-align:center;color:#555;font-size:11px'>v" + String(FW_VERSION) + " | DMA NeoPixel | " + String(PIXEL_COUNT) + " LEDs</p>");
   server.sendContent("</body></html>");
   server.sendContent("");
 }
@@ -581,7 +590,7 @@ void handleApiStatus() {
   // Store IP string before snprintf to avoid dangling pointer
   // (WiFi.localIP().toString() returns a temporary String)
   String ipStr = WiFi.localIP().toString();
-  char json[450];
+  char json[560];
   snprintf(json, sizeof(json),
     "{\"device\":\"mirror\","
     "\"version\":\"%s\","
@@ -598,7 +607,9 @@ void handleApiStatus() {
     "\"neopixel\":\"DMA_GPIO3\","
     "\"oled\":\"I2C_GPIO0_GPIO2\","
     "\"ntpValid\":%s,"
-    "\"stable\":%s}",
+    "\"bootCount\":%d,"
+    "\"stable\":%s,"
+    "\"capabilities\":[\"color\",\"ntp\",\"oled\",\"patterns\"]}",
     FW_VERSION,
     safeMode ? "true" : "false",
     uptime,
@@ -611,6 +622,7 @@ void handleApiStatus() {
     Brightness,
     customR, customG, customB,
     isTimeValid() ? "true" : "false",
+    lastBootCount,
     stabilityConfirmed ? "true" : "false");
   server.send(200, "application/json", json);
 }
@@ -871,6 +883,22 @@ void handleWifiPage() {
 }
 
 // ============================================================
+// Web Server - Safe Mode (GET /api/safemode)
+// ============================================================
+void handleApiSafeMode() {
+  logWarn("Safe mode requested via API");
+  EEPROM.begin(EEPROM_SIZE);
+  EEPROM.write(EEPROM_BOOT_COUNT, 3);
+  EEPROM.commit();
+  EEPROM.end();
+  server.send(200, "application/json",
+    "{\"ok\":true,\"action\":\"safe_mode_armed\","
+    "\"message\":\"Restarting into safe mode...\"}");
+  delay(500);
+  ESP.restart();
+}
+
+// ============================================================
 // Web Server - Restart (GET /restart)
 // ============================================================
 void handleRestart() {
@@ -1067,7 +1095,7 @@ void setup() {
   if (!safeMode) {
     strip.Begin();
     strip.Show();
-    logInfo("NeoPixel: DMA GPIO3, " + String(PIXEL_COUNT) + " LEDs (" + String(PIXEL_COUNT - NUM_DEAD) + " active)");
+    logInfo("NeoPixel: DMA GPIO3, " + String(PIXEL_COUNT) + " LEDs (all active)");
     ledStartupTest();
   } else {
     logWarn("NeoPixel SKIPPED (safe mode)");
@@ -1086,6 +1114,7 @@ void setup() {
   server.on("/wifi", handleWifiPage);
   server.on("/api/wifi/scan", handleApiWifiScan);
   server.on("/api/wifi/config", handleApiWifiConfig);
+  server.on("/api/safemode", handleApiSafeMode);
   server.on("/restart", handleRestart);
   server.onNotFound(handleDashboard);
   server.begin();
@@ -1142,12 +1171,19 @@ void loop() {
   // WiFi reconnect (check every 30s, reconnect if disconnected)
   // Skip if WL_IDLE_STATUS (connection attempt already in progress)
   static unsigned long lastWifiCheck = 0;
+  static bool wasDisconnected = false;
   if (millis() - lastWifiCheck > 30000) {
     lastWifiCheck = millis();
     wl_status_t wifiStatus = WiFi.status();
     if (wifiStatus != WL_CONNECTED && wifiStatus != WL_IDLE_STATUS && ssid.length() > 0) {
       logWarn("WiFi disconnected, reconnecting...");
       WiFi.begin(ssid.c_str(), password.c_str());
+      wasDisconnected = true;
+    } else if (wifiStatus == WL_CONNECTED && wasDisconnected) {
+      // Re-sync NTP after WiFi reconnect
+      wasDisconnected = false;
+      logInfo("WiFi reconnected, re-syncing NTP...");
+      ntpSync();
     }
   }
 

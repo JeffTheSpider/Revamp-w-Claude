@@ -18,27 +18,16 @@ extern void logInfo(const String& msg);
 NeoPixelBus<NeoGrbFeature, NeoEsp8266Dma800KbpsMethod> strip(PIXEL_COUNT);
 
 // ============================================================
-// Dead Pixel Map
+// Pixel Helpers
 // ============================================================
-// LEDs 0, 55-59 are physically dead (no light output).
-// LED 54 is degraded (yellow tint, reduced output).
-const uint8_t NUM_DEAD = 6;
-const uint8_t DEGRADED_PIXEL = 54;
+// All 60 LEDs confirmed working (2026-03-09).
+// Previously LEDs 0, 55-59 were masked as dead — they were fine.
+const uint8_t NUM_DEAD = 0;
 
-// Bitmask for O(1) dead pixel lookup (bits 0, 55-59 set)
-const uint64_t DEAD_MASK = (1ULL << 0) | (1ULL << 55) | (1ULL << 56) |
-                           (1ULL << 57) | (1ULL << 58) | (1ULL << 59);
+bool isDeadPixel(uint8_t p) { return false; }
 
-bool isDeadPixel(uint8_t p) {
-  return p < 64 && (DEAD_MASK & (1ULL << p));
-}
-
-// Write a color to a pixel, skipping dead ones and dimming degraded
 void setPixel(uint8_t p, RgbColor c) {
-  if (p >= PIXEL_COUNT || isDeadPixel(p)) return;
-  if (p == DEGRADED_PIXEL) {
-    c = RgbColor(c.R * 3 / 4, c.G * 3 / 4, c.B * 3 / 4);
-  }
+  if (p >= PIXEL_COUNT) return;
   strip.SetPixelColor(p, c);
 }
 
@@ -58,7 +47,7 @@ enum LedMode : uint8_t {
   MODE_BLUE,
   MODE_WHITE,
   MODE_SPECIAL1,   // Random blue flash
-  MODE_SPECIAL2,   // Random multicolor
+  MODE_WEDGE,      // Wedge: fill then drain
   MODE_SPECIAL3,   // Brightness sweep
   MODE_RAINBOW,    // Rainbow cycle (replaces empty Special4)
   MODE_CANDLE,     // Fire/candle flicker
@@ -72,14 +61,14 @@ enum LedMode : uint8_t {
 // Machine-readable names (for API)
 const char* const MODE_IDS[] = {
   "clock", "red", "green", "blue", "white",
-  "special1", "special2", "special3",
+  "special1", "wedge", "special3",
   "rainbow", "candle", "wave", "sparkle", "color", "off"
 };
 
 // Human-readable labels (for UI)
 const char* const MODE_LABELS[] = {
   "Clock", "Red", "Green", "Blue", "White",
-  "Blue Flash", "Multicolor", "Sweep",
+  "Blue Flash", "Wedge", "Sweep",
   "Rainbow", "Candle", "Color Wave", "Sparkle", "Custom", "Off"
 };
 
@@ -111,6 +100,16 @@ unsigned long lastPat = 0;                 // Throttle timer
 uint16_t patStep = 0;                      // Animation frame counter
 uint8_t sweepVal = 0;                      // Special3 brightness ramp
 uint8_t customR = 255, customG = 100, customB = 50;  // Custom color (set via API)
+
+// Wedge pattern state
+uint8_t wedgeOrder[PIXEL_COUNT];   // Shuffled pixel indices
+uint8_t wedgePos = 0;              // Current position in order array
+uint8_t wedgePhase = 0;            // 0=filling, 1=draining, 2=pause-lit, 3=pause-dark
+uint8_t wedgeBri[PIXEL_COUNT];     // Per-pixel brightness (0-255 fade progress)
+uint8_t wedgeR[PIXEL_COUNT];       // Per-pixel target R
+uint8_t wedgeG[PIXEL_COUNT];       // Per-pixel target G
+uint8_t wedgeB[PIXEL_COUNT];       // Per-pixel target B
+unsigned long wedgePauseStart = 0; // Pause timer
 
 // Set custom color and switch to color mode
 void setCustomColor(uint8_t r, uint8_t g, uint8_t b) {
@@ -175,23 +174,135 @@ void patSolid(RgbColor c) {
 // Randomly lights blue pixels. Pixels accumulate, creating a
 // growing constellation of blue dots.
 void patSpecial1(int br) {
-  if (millis() - lastPat < 100) return;
-  lastPat = millis();
+  unsigned long now = millis();
+  if (now - lastPat < 100) return;
+  lastPat = now;
   setPixel(random(PIXEL_COUNT), RgbColor(0, 0, br));
   strip.Show();
 }
 
 // ============================================================
-// Pattern: Special 2 - Random Multicolor
+// Pattern: Wedge (Charlie's original "Multicolor", renamed)
 // ============================================================
-// Randomly lights pixels in random colors. Creates a colorful
-// mosaic that fills over time.
-void patSpecial2(int br) {
-  if (millis() - lastPat < 100) return;
-  lastPat = millis();
-  int r = random(br + 1), g = random(br + 1), b = random(br + 1);
-  setPixel(random(PIXEL_COUNT), RgbColor(r, g, b));
+// Phase 1: Fills all pixels one-by-one in random order with
+//          random colors until every LED is lit.
+// Phase 2: Turns them off one-by-one in a new random order
+//          until all are dark. Then loops back to Phase 1.
+// Fisher-Yates shuffle for truly random, non-repeating order.
+
+void wedgeShuffle() {
+  for (uint8_t i = 0; i < PIXEL_COUNT; i++) wedgeOrder[i] = i;
+  for (uint8_t i = PIXEL_COUNT - 1; i > 0; i--) {
+    uint8_t j = random(i + 1);
+    uint8_t tmp = wedgeOrder[i];
+    wedgeOrder[i] = wedgeOrder[j];
+    wedgeOrder[j] = tmp;
+  }
+}
+
+// Enhanced Wedge: LEDs fade up/down smoothly, pause when all lit/dark
+// Phase 0: filling (place new pixel every 250ms, all pixels fade toward target)
+// Phase 1: draining (mark pixel for fade-out every 250ms)
+// Phase 2: pause when all lit (~1s)
+// Phase 3: pause when all dark (~1s)
+void patWedge(int br) {
+  unsigned long now = millis();
+
+  // Pause phases
+  if (wedgePhase == 2) {
+    if (now - wedgePauseStart >= 1000) {
+      wedgePhase = 1;  // Start draining
+      wedgePos = 0;
+      wedgeShuffle();
+    }
+    return;  // Hold all LEDs at full brightness during pause
+  }
+  if (wedgePhase == 3) {
+    if (now - wedgePauseStart >= 1000) {
+      wedgePhase = 0;  // Start filling
+      wedgePos = 0;
+      wedgeShuffle();
+      memset(wedgeBri, 0, sizeof(wedgeBri));
+    }
+    return;  // Hold all LEDs off during pause
+  }
+
+  // Fade tick at ~30fps for smooth transitions
+  if (now - lastPat < 33) return;
+  lastPat = now;
+
+  // Place/remove a new pixel every ~250ms (every ~8 frames)
+  static unsigned long lastPlacement = 0;
+  if (wedgePos < PIXEL_COUNT && now - lastPlacement >= 250) {
+    lastPlacement = now;
+    uint8_t idx = wedgeOrder[wedgePos];
+    if (wedgePhase == 0) {
+      // Assign random target color for this pixel
+      wedgeR[idx] = random(br + 1);
+      wedgeG[idx] = random(br + 1);
+      wedgeB[idx] = random(br + 1);
+      wedgeBri[idx] = 1;  // Start fading up (non-zero = active)
+    } else {
+      wedgeBri[idx] = 254;  // Mark for fade-down (will go to 0)
+      wedgeR[idx] = 0;
+      wedgeG[idx] = 0;
+      wedgeB[idx] = 0;
+    }
+    wedgePos++;
+  }
+
+  // Animate all pixels toward their targets
+  bool allDone = true;
+  for (uint8_t i = 0; i < PIXEL_COUNT; i++) {
+    if (wedgePhase == 0) {
+      // Fading up: increase brightness toward 255
+      if (wedgeBri[i] > 0 && wedgeBri[i] < 255) {
+        wedgeBri[i] = (wedgeBri[i] > 225) ? 255 : wedgeBri[i] + 30;
+      }
+      // Check if all placed pixels are fully bright
+      if (wedgePos >= PIXEL_COUNT && wedgeBri[i] < 255) allDone = false;
+    } else {
+      // Fading down: decrease brightness toward 0
+      if (wedgeBri[i] > 0) {
+        wedgeBri[i] = (wedgeBri[i] < 30) ? 0 : wedgeBri[i] - 30;
+        if (wedgeBri[i] > 0) allDone = false;
+      }
+    }
+
+    // Apply brightness to pixel
+    uint8_t scale = wedgeBri[i];
+    RgbColor c(0);
+    if (scale > 0) {
+      // Original target colors are stored; scale by fade progress
+      RgbColor orig = strip.GetPixelColor(i);
+      if (wedgePhase == 0 && wedgeBri[i] < 255) {
+        // Fading up: scale target color by brightness
+        c = RgbColor((uint8_t)((uint16_t)wedgeR[i] * scale / 255),
+                      (uint8_t)((uint16_t)wedgeG[i] * scale / 255),
+                      (uint8_t)((uint16_t)wedgeB[i] * scale / 255));
+      } else if (wedgePhase == 0) {
+        c = RgbColor(wedgeR[i], wedgeG[i], wedgeB[i]);
+      } else {
+        // Fading down: get current color and scale it down
+        c = RgbColor((uint8_t)((uint16_t)orig.R * scale / 255),
+                      (uint8_t)((uint16_t)orig.G * scale / 255),
+                      (uint8_t)((uint16_t)orig.B * scale / 255));
+      }
+    }
+    setPixel(i, c);
+  }
   strip.Show();
+
+  // Check for phase transitions
+  if (wedgePos >= PIXEL_COUNT && allDone) {
+    if (wedgePhase == 0) {
+      wedgePhase = 2;  // Pause with all lit
+      wedgePauseStart = now;
+    } else {
+      wedgePhase = 3;  // Pause with all dark
+      wedgePauseStart = now;
+    }
+  }
 }
 
 // ============================================================
@@ -199,8 +310,9 @@ void patSpecial2(int br) {
 // ============================================================
 // Sweeps all LEDs through blue brightness 0-255, then wraps.
 void patSpecial3() {
-  if (millis() - lastPat < 100) return;
-  lastPat = millis();
+  unsigned long now = millis();
+  if (now - lastPat < 100) return;
+  lastPat = now;
   for (int i = 0; i < PIXEL_COUNT; i++) {
     setPixel(i, RgbColor(0, 0, sweepVal));
   }
@@ -213,10 +325,11 @@ void patSpecial3() {
 // ============================================================
 // Smooth rainbow distributed across the ring, rotating over time.
 void patRainbow(int br) {
-  if (millis() - lastPat < 33) return;  // ~30fps
-  lastPat = millis();
+  unsigned long now = millis();
+  if (now - lastPat < 33) return;  // ~30fps
+  lastPat = now;
   for (int i = 0; i < PIXEL_COUNT; i++) {
-    float hue = fmod((float)(i + patStep) / PIXEL_COUNT, 1.0f);
+    float hue = (float)((i + patStep) % PIXEL_COUNT) / PIXEL_COUNT;
     float h6 = hue * 6.0f;
     int sector = (int)h6;
     float frac = h6 - sector;
@@ -243,8 +356,9 @@ void patRainbow(int br) {
 // ============================================================
 // Warm flickering orange-red, simulating firelight.
 void patCandle(int br) {
-  if (millis() - lastPat < 50) return;  // 20fps for organic feel
-  lastPat = millis();
+  unsigned long now = millis();
+  if (now - lastPat < 50) return;  // 20fps for organic feel
+  lastPat = now;
   for (int i = 0; i < PIXEL_COUNT; i++) {
     uint8_t fl = (uint8_t)(random(40, 100) * (long)br / 100);
     setPixel(i, RgbColor(fl, fl * 40 / 100, 0));
@@ -257,11 +371,12 @@ void patCandle(int br) {
 // ============================================================
 // Sinusoidal blue-cyan wave traveling around the ring.
 void patWave(int br) {
-  if (millis() - lastPat < 33) return;  // 30fps
-  lastPat = millis();
+  unsigned long now = millis();
+  if (now - lastPat < 33) return;  // 30fps
+  lastPat = now;
   for (int i = 0; i < PIXEL_COUNT; i++) {
     float phase = (float)(i + patStep) * 6.28318f / 15.0f;
-    uint8_t val = (uint8_t)((sin(phase) * 0.5f + 0.5f) * br);
+    uint8_t val = (uint8_t)((sinf(phase) * 0.5f + 0.5f) * br);
     setPixel(i, RgbColor(0, val / 3, val));
   }
   strip.Show();
@@ -274,8 +389,9 @@ void patWave(int br) {
 // White sparkles appear randomly and fade out, creating a
 // twinkling star field effect.
 void patSparkle(int br) {
-  if (millis() - lastPat < 50) return;
-  lastPat = millis();
+  unsigned long now = millis();
+  if (now - lastPat < 50) return;
+  lastPat = now;
   // Fade all live pixels
   for (int i = 0; i < PIXEL_COUNT; i++) {
     if (isDeadPixel(i)) continue;
@@ -301,6 +417,9 @@ void tickPatterns(int br) {
   if (modeChanged) {
     prevH = -1; prevM = -1; prevS = -1;
     patStep = 0; sweepVal = 0; lastPat = 0;
+    wedgePos = 0; wedgePhase = 0; wedgeShuffle();
+    memset(wedgeBri, 0, sizeof(wedgeBri));
+    wedgePauseStart = 0;
     if (currentMode == MODE_OFF) clearAll();
   }
 
@@ -313,7 +432,7 @@ void tickPatterns(int br) {
     case MODE_BLUE:     patSolid(RgbColor(0, 0, br)); break;
     case MODE_WHITE:    patSolid(RgbColor(wbr)); break;
     case MODE_SPECIAL1: patSpecial1(br); break;
-    case MODE_SPECIAL2: patSpecial2(br); break;
+    case MODE_WEDGE:    patWedge(br); break;
     case MODE_SPECIAL3: patSpecial3(); break;
     case MODE_RAINBOW:  patRainbow(br); break;
     case MODE_CANDLE:   patCandle(br); break;

@@ -13,10 +13,14 @@
 #define FEATURE_NEOPIXEL   1
 
 // === Pin Definitions ===
-// NeoPixel uses DMA method (hardwired to GPIO3, hardware I2S).
-// Serial disabled (DMA conflicts with RX). Telnet replaces it.
-// Safe mode does NOT init NeoPixel, so USB recovery still works.
-#define PIN_NEOPIXEL     3   // GPIO3 (RX) - NeoPixel data (DMA)
+// Each of 4 LED strips is wired to a separate GPIO pin.
+// BitBang method (DMA/I2S broken on this chip).
+// GPIO0 doubles as FLASH button (safe mode trigger).
+#define PIN_STRIP1       2   // GPIO2 (D4) - Strip 1 (top)
+#define PIN_STRIP2       4   // GPIO4 (D2) - Strip 2
+#define PIN_STRIP3       5   // GPIO5 (D1) - Strip 3
+#define PIN_STRIP4       0   // GPIO0 (D3) - Strip 4 (bottom)
+#define PIN_NEOPIXEL     2   // Alias for global pixel buffer (pin irrelevant for buffer)
 #define PIN_FLASH_BTN    0   // GPIO0 (D3) - FLASH button (safe mode trigger)
 
 // === NeoPixel Config ===

@@ -12,12 +12,16 @@ const express = require('express');
 const http = require('http');
 const { WebSocketServer } = require('ws');
 const path = require('path');
+const fs = require('fs');
 const DeviceManager = require('./src/services/device-manager');
 const SceneManager = require('./src/services/scene-manager');
 const apiRoutes = require('./src/api/routes');
 const sceneRoutes = require('./src/api/scenes');
 
-const PORT = process.env.PORT || 3000;
+// Load config
+let hubConfig = {};
+try { hubConfig = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8')); } catch (_) {}
+const PORT = process.env.PORT || hubConfig.port || 3000;
 
 const app = express();
 const server = http.createServer(app);
@@ -28,6 +32,30 @@ const wss = new WebSocketServer({ server, path: '/ws' });
 // Middleware
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
+
+// Basic rate limiting for API (100 requests per 10s per IP)
+const rateLimitMap = new Map();
+app.use('/api', (req, res, next) => {
+  const ip = req.ip;
+  const now = Date.now();
+  let entry = rateLimitMap.get(ip);
+  if (!entry || now - entry.start > 10000) {
+    entry = { start: now, count: 1 };
+    rateLimitMap.set(ip, entry);
+  } else {
+    entry.count++;
+  }
+  if (entry.count > 100) {
+    return res.status(429).json({ error: 'Rate limit exceeded' });
+  }
+  next();
+});
+setInterval(() => {
+  const cutoff = Date.now() - 10000;
+  for (const [ip, entry] of rateLimitMap) {
+    if (entry.start < cutoff) rateLimitMap.delete(ip);
+  }
+}, 30000);
 
 // Request logging (API calls only, skip static files)
 app.use('/api', (req, res, next) => {
@@ -159,6 +187,14 @@ function broadcast(msg) {
 // Broadcast scheduled scene activations to all clients
 sceneManager.on('scheduledActivation', (name, results) => {
   broadcast({ type: 'scene_activated', name, results, scheduled: true });
+});
+
+// Broadcast scene list updates on save/delete
+sceneManager.on('sceneSaved', () => {
+  broadcast({ type: 'scenes', data: sceneManager.list() });
+});
+sceneManager.on('sceneDeleted', () => {
+  broadcast({ type: 'scenes', data: sceneManager.list() });
 });
 
 // Graceful shutdown: stop cron jobs and polling

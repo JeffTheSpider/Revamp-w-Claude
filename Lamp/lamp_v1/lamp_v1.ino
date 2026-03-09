@@ -1,20 +1,20 @@
 // ============================================================
-// Charlie's Lamp v1.0.0
+// Charlie's Lamp v1.1.0
 // ============================================================
 // Firmware for 4-strip resin LED lamp (24x WS2812B).
 // Safety architecture mirrors Charlie's Mirror (clock):
 //   OTA, safe mode, watchdog, telnet logging, web dashboard.
 //
 // Hardware:
-//   NeoPixel: GPIO3 (RX) via DMA/I2S - glitch-free
-//   FLASH:    GPIO0 - safe mode trigger
+//   NeoPixel: 4 strips on separate GPIOs (2,4,5,0) via BitBang
+//   FLASH:    GPIO0 - safe mode trigger (shared with strip 4)
 //   No OLED display on this device.
 //
-// Serial is DISABLED (DMA conflicts with RX). Telnet replaces it.
+// Serial is available (NeoPixel NOT on GPIO3/RX). Telnet also available.
 // Safe mode skips NeoPixel init so USB recovery still works.
 // ============================================================
 
-#define FW_VERSION "1.0.0"
+#define FW_VERSION "1.1.0"
 
 #include <ESP8266WiFi.h>
 #include <ESP8266mDNS.h>
@@ -35,6 +35,8 @@ bool safeMode = false;
 unsigned long bootTime = 0;
 unsigned long lastStableTime = 0;
 bool stabilityConfirmed = false;
+uint8_t lastBootCount = 0;  // For API diagnostics
+volatile bool pinScanRequested = false;
 
 // === Web Server ===
 ESP8266WebServer server(80);
@@ -213,17 +215,20 @@ void crashCounterCheck() {
   EEPROM.begin(EEPROM_SIZE);
   uint8_t bootCount = EEPROM.read(EEPROM_BOOT_COUNT);
   if (bootCount > 10) bootCount = 0;
+  lastBootCount = bootCount;  // Store for API diagnostics
 
   if (bootCount >= 3) {
     safeMode = true;
     EEPROM.write(EEPROM_BOOT_COUNT, 0);
-    logWarn("Boot count >= 3, forcing safe mode");
+    EEPROM.commit();
+    EEPROM.end();
+    logWarn("SAFE MODE: boot count was " + String(bootCount) + " (>=3)");
   } else {
     EEPROM.write(EEPROM_BOOT_COUNT, bootCount + 1);
-    logInfo("Boot count: " + String(bootCount + 1));
+    EEPROM.commit();
+    EEPROM.end();
+    logInfo("Boot count: " + String(bootCount) + " -> " + String(bootCount + 1) + " (safe mode at 3)");
   }
-  EEPROM.commit();
-  EEPROM.end();
 }
 
 void crashCounterClear() {
@@ -267,15 +272,20 @@ bool connectWiFi() {
   int attempts = 0;
   while (WiFi.status() != WL_CONNECTED && attempts < 30) {
     delay(500);
+    yield();  // Feed soft WDT during blocking connect
     attempts++;
   }
 
   if (WiFi.status() == WL_CONNECTED) {
+    // Use gateway/subnet from completed DHCP, set static IP last octet
+    IPAddress gw = WiFi.gatewayIP();
+    IPAddress sn = WiFi.subnetMask();
     IPAddress ip = WiFi.localIP();
     ip[3] = STATIC_IP_OCTET;
-    WiFi.config(ip, WiFi.gatewayIP(), WiFi.subnetMask());
+    WiFi.config(ip, gw, sn);
     delay(100);
-    logInfo("WiFi connected: " + ip.toString() + " (" + String(WiFi.RSSI()) + " dBm)");
+    String ipStr = WiFi.localIP().toString();
+    logInfo("WiFi connected: " + ipStr + " (" + String(WiFi.RSSI()) + " dBm)");
     return true;
   }
 
@@ -332,6 +342,59 @@ void setupOTA() {
 }
 
 // ============================================================
+// Pin Scanner (diagnostic: which GPIO drives the LEDs?)
+// ============================================================
+// Tests GPIOs 3,5,4,2,0 using NeoPixelBus BitBang method.
+// Each pin lights all LEDs a different color for 3 seconds.
+// Red=GPIO3/RX, Green=GPIO5/D1, Blue=GPIO4/D2,
+// Yellow=GPIO2/D4, Magenta=GPIO0/D3
+// Triggered via GET /api/pinscan (not at startup).
+void pinScanTest() {
+  logInfo("=== PIN SCAN: Testing 5 GPIOs for LED data line ===");
+
+  const uint8_t pins[] = {3, 5, 4, 2, 0};
+  const char* names[] = {"GPIO3/RX", "GPIO5/D1", "GPIO4/D2", "GPIO2/D4", "GPIO0/D3"};
+  RgbColor colors[] = {
+    RgbColor(200, 0, 0),      // GPIO3: Red
+    RgbColor(0, 200, 0),      // GPIO5: Green
+    RgbColor(0, 0, 200),      // GPIO4: Blue
+    RgbColor(200, 200, 0),    // GPIO2: Yellow
+    RgbColor(200, 0, 200),    // GPIO0: Magenta
+  };
+
+  for (int p = 0; p < 5; p++) {
+    uint8_t pin = pins[p];
+
+    // GPIO3 defaults to UART0 RX - must select GPIO function
+    if (pin == 3) {
+      PIN_FUNC_SELECT(PERIPHS_IO_MUX_U0RXD_U, FUNC_GPIO3);
+    }
+
+    // Create temporary BitBang strip on this pin
+    NeoPixelBus<NeoGrbFeature, NeoEsp8266BitBang800KbpsMethod> testStrip(PIXEL_COUNT, pin);
+    testStrip.Begin();
+
+    for (int i = 0; i < PIXEL_COUNT; i++) {
+      testStrip.SetPixelColor(i, colors[p]);
+    }
+
+    logInfo("PIN SCAN: " + String(names[p]) + " -> color sent, holding 3s");
+    testStrip.Show();
+    delay(3000);
+    yield();
+
+    // Clear
+    testStrip.ClearTo(RgbColor(0));
+    testStrip.Show();
+    delay(500);
+    yield();
+  }
+
+  logInfo("=== PIN SCAN COMPLETE ===");
+  logInfo("Colors: Red=GPIO3, Green=D1, Blue=D2, Yellow=D4, Magenta=D3");
+}
+
+// ============================================================
 // LED Startup Test
 // ============================================================
 void ledStartupTest() {
@@ -354,7 +417,7 @@ void ledStartupTest() {
     for (int i = 0; i < LEDS_PER_STRIP; i++) {
       strip.SetPixelColor(start + i, colors[s]);
     }
-    strip.Show();
+    showStrip();
     delay(400);
   }
   delay(500);
@@ -363,8 +426,8 @@ void ledStartupTest() {
   for (int i = 0; i < PIXEL_COUNT; i++) {
     strip.SetPixelColor(i, RgbColor(Brightness));
   }
-  strip.Show();
-  delay(500);
+  showStrip();
+  delay(200);
 
   // Clear
   clearAll();
@@ -459,7 +522,7 @@ void handleDashboard() {
   server.sendContent("<span class='label'>Heap:</span> " + String(ESP.getFreeHeap()) + " bytes<br>");
   server.sendContent("<span class='label'>LEDs:</span> " + String(PIXEL_COUNT) + " (" + String(STRIPS) + " strips x " + String(LEDS_PER_STRIP) + ")<br>");
   server.sendContent("<span class='label'>NeoPixel:</span> ");
-  server.sendContent(safeMode ? "<span class='warn'>Disabled</span>" : "<span class='ok'>DMA GPIO3</span>");
+  server.sendContent(safeMode ? "<span class='warn'>Disabled</span>" : "<span class='ok'>BitBang GPIO2/4/5/0</span>");
   server.sendContent("</div>");
 
   // Actions
@@ -477,7 +540,7 @@ void handleDashboard() {
   server.sendContent("<code style='color:#ff9f43'>telnet " + String(HOSTNAME) + ".local</code></div>");
 
   // Footer
-  server.sendContent("<p style='text-align:center;color:#555;font-size:11px'>v" + String(FW_VERSION) + " | DMA NeoPixel | " + String(PIXEL_COUNT) + " LEDs</p>");
+  server.sendContent("<p style='text-align:center;color:#555;font-size:11px'>v" + String(FW_VERSION) + " | BitBang NeoPixel | " + String(PIXEL_COUNT) + " LEDs</p>");
   server.sendContent("</body></html>");
   server.sendContent("");
 }
@@ -490,7 +553,7 @@ void handleApiStatus() {
   // Store IP string before snprintf to avoid dangling pointer
   // (WiFi.localIP().toString() returns a temporary String)
   String ipStr = WiFi.localIP().toString();
-  char json[400];
+  char json[512];
   snprintf(json, sizeof(json),
     "{\"device\":\"lamp\","
     "\"version\":\"%s\","
@@ -504,10 +567,12 @@ void handleApiStatus() {
     "\"modeName\":\"%s\","
     "\"brightness\":%d,"
     "\"color\":{\"r\":%d,\"g\":%d,\"b\":%d},"
-    "\"neopixel\":\"DMA_GPIO3\","
+    "\"neopixel\":\"BitBang_4pin\","
     "\"ledCount\":%d,"
     "\"strips\":%d,"
-    "\"stable\":%s}",
+    "\"bootCount\":%d,"
+    "\"stable\":%s,"
+    "\"capabilities\":[\"color\",\"morse\",\"patterns\"]}",
     FW_VERSION,
     safeMode ? "true" : "false",
     uptime,
@@ -521,6 +586,7 @@ void handleApiStatus() {
     customR, customG, customB,
     PIXEL_COUNT,
     STRIPS,
+    lastBootCount,
     stabilityConfirmed ? "true" : "false");
   server.send(200, "application/json", json);
 }
@@ -529,7 +595,7 @@ void handleApiStatus() {
 // Web Server - Pattern List (GET /api/patterns)
 // ============================================================
 void handleApiPatterns() {
-  char json[512];
+  char json[768];
   int pos = 0;
   json[pos++] = '[';
   for (int i = 0; i < MODE_COUNT; i++) {
@@ -657,10 +723,14 @@ void handleApiMorse() {
   morseStart(text.c_str(), wpm, loop);
   logInfo("Morse: \"" + text + "\" wpm=" + String(wpm) + (loop ? " loop" : ""));
 
-  char json[128];
+  // Escape quotes and backslashes for safe JSON output
+  String safeText = text;
+  safeText.replace("\\", "\\\\");
+  safeText.replace("\"", "\\\"");
+  char json[192];
   snprintf(json, sizeof(json),
     "{\"ok\":true,\"text\":\"%s\",\"wpm\":%d,\"loop\":%s}",
-    text.c_str(), wpm, loop ? "true" : "false");
+    safeText.c_str(), wpm, loop ? "true" : "false");
   server.send(200, "application/json", json);
 }
 
@@ -819,6 +889,34 @@ void handleWifiPage() {
 }
 
 // ============================================================
+// Web Server - Force Safe Mode (GET /api/safemode)
+// ============================================================
+// Sets the crash counter to 3 in EEPROM and restarts.
+// On next boot, crashCounterCheck() reads 3 -> safe mode.
+// This guarantees OTA recovery without physical access.
+void handleApiSafeMode() {
+  logWarn("REMOTE SAFE MODE requested via API");
+  EEPROM.begin(EEPROM_SIZE);
+  EEPROM.write(EEPROM_BOOT_COUNT, 3);
+  EEPROM.commit();
+  EEPROM.end();
+  logWarn("Boot count forced to 3 - next boot will be safe mode");
+  server.send(200, "application/json",
+    "{\"ok\":true,\"action\":\"safe_mode_armed\",\"message\":\"Restarting into safe mode...\"}");
+  delay(500);
+  ESP.restart();
+}
+
+// ============================================================
+// Web Server - Pin Scan (GET /api/pinscan)
+// ============================================================
+void handleApiPinScan() {
+  server.send(200, "application/json",
+    "{\"ok\":true,\"message\":\"Pin scan starting - watch LEDs for 20s\"}");
+  pinScanRequested = true;
+}
+
+// ============================================================
 // Web Server - Restart (GET /restart)
 // ============================================================
 void handleRestart() {
@@ -857,7 +955,7 @@ void handleTelnet() {
     TelnetStream.println("Free heap: " + String(ESP.getFreeHeap()));
     TelnetStream.println("WiFi: " + WiFi.localIP().toString() + " (" + String(WiFi.RSSI()) + " dBm)");
     TelnetStream.println("LEDs: " + String(PIXEL_COUNT) + " (" + String(STRIPS) + "x" + String(LEDS_PER_STRIP) + ")");
-    TelnetStream.println("NeoPixel: DMA GPIO3");
+    TelnetStream.println("NeoPixel: BitBang 4-pin (GPIO2,4,5,0)");
 
   } else if (cmd.startsWith("mode ")) {
     String modeId = cmd.substring(5);
@@ -956,11 +1054,15 @@ void setup() {
   // OTA
   setupOTA();
 
-  // NeoPixel (skip in safe mode to preserve USB recovery)
+  // NeoPixel init (skip in safe mode to preserve USB recovery)
   if (!safeMode) {
+    // Init all 4 strip pins as OUTPUT LOW
+    for (int i = 0; i < STRIPS; i++) {
+      pinMode(STRIP_PINS[i], OUTPUT);
+      digitalWrite(STRIP_PINS[i], LOW);
+    }
     strip.Begin();
-    strip.Show();
-    logInfo("NeoPixel: DMA GPIO3, " + String(PIXEL_COUNT) + " LEDs (" + String(STRIPS) + " strips)");
+    logInfo("NeoPixel: BitBang 4-pin, " + String(PIXEL_COUNT) + " LEDs (" + String(STRIPS) + " strips)");
     ledStartupTest();
   } else {
     logWarn("NeoPixel SKIPPED (safe mode)");
@@ -981,6 +1083,8 @@ void setup() {
   server.on("/api/wifi/scan", handleApiWifiScan);
   server.on("/api/wifi/config", handleApiWifiConfig);
   server.on("/restart", handleRestart);
+  server.on("/api/safemode", handleApiSafeMode);
+  server.on("/api/pinscan", handleApiPinScan);
   server.onNotFound(handleDashboard);
   server.begin();
   logInfo("Web server started on port 80");
@@ -1004,6 +1108,18 @@ void loop() {
   server.handleClient();
   MDNS.update();
   handleTelnet();
+
+  // Pin scan diagnostic (API-triggered)
+  if (pinScanRequested) {
+    pinScanRequested = false;
+    watchdogStop();
+    pinScanTest();
+    // Re-init main strip after pin scan
+    strip.Begin();
+    strip.Show();
+    modeChanged = true;
+    watchdogStart();
+  }
 
   // LED patterns (skip during OTA or safe mode)
   if (!safeMode && !otaInProgress) {

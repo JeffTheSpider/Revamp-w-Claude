@@ -14,6 +14,12 @@ let patternCache = {}; // deviceId -> [patterns]
 let activeSlider = null; // deviceId of slider being dragged (skip updates)
 let renderPending = false;
 
+// Update slider filled track visual
+function updateSliderFill(slider) {
+  const pct = ((slider.value - slider.min) / (slider.max - slider.min)) * 100;
+  slider.style.setProperty('--fill-pct', pct + '%');
+}
+
 // Batch multiple updates into one render per frame
 function scheduleRender() {
   if (renderPending) return;
@@ -60,6 +66,13 @@ function handleMessage(msg) {
       updateDevice(msg.id, msg.data);
       break;
     case 'device_online':
+      // Clear pattern cache so we re-fetch (patterns may have changed)
+      if (msg.id) delete patternCache[msg.id];
+      allPatternsRendered = false; // Refresh all-devices grid too
+      if (ws && ws.readyState === 1) {
+        ws.send(JSON.stringify({ type: 'get_devices' }));
+      }
+      break;
     case 'device_offline':
       if (ws && ws.readyState === 1) {
         ws.send(JSON.stringify({ type: 'get_devices' }));
@@ -95,16 +108,15 @@ function renderDevices() {
   if (devices.length === 0) {
     while (container.firstChild) container.removeChild(container.firstChild);
     const p = document.createElement('p');
-    p.style.cssText = 'text-align:center;color:#777;font-size:13px';
+    p.style.cssText = 'text-align:center;color:var(--text-dim);font-size:13px';
     p.textContent = 'No devices found';
     container.appendChild(p);
     document.getElementById('all-section').style.display = 'none';
     return;
   }
 
-  // Remove "no devices" placeholder if present
-  const placeholder = container.querySelector('p');
-  if (placeholder) container.removeChild(placeholder);
+  // Remove skeleton cards and placeholders
+  container.querySelectorAll('.skeleton-card, p').forEach(el => el.remove());
 
   // Build set of current device IDs
   const currentIds = new Set(devices.map(d => d.id));
@@ -115,7 +127,7 @@ function renderDevices() {
   });
 
   // Update or create cards for each device
-  devices.forEach(dev => {
+  devices.forEach((dev, idx) => {
     const existing = container.querySelector('[data-device-id="' + dev.id + '"]');
     if (existing) {
       const wasOnline = existing.classList.contains('online');
@@ -127,15 +139,19 @@ function renderDevices() {
         updateDeviceCard(existing, dev);
       }
     } else {
-      // New device - create card
-      container.appendChild(createDeviceCard(dev));
+      // New device - create card with stagger animation
+      const newCard = createDeviceCard(dev);
+      newCard.style.setProperty('--card-index', idx);
+      container.appendChild(newCard);
     }
   });
 
   // Show "All Devices" section if any online
-  const hasOnline = devices.some(d => d.online);
-  document.getElementById('all-section').style.display = hasOnline ? '' : 'none';
-  if (hasOnline) renderAllPatterns();
+  const onlineCount = devices.filter(d => d.online).length;
+  document.getElementById('all-section').style.display = onlineCount > 0 ? '' : 'none';
+  const countEl = document.getElementById('all-device-count');
+  if (countEl) countEl.textContent = '(' + onlineCount + ' online)';
+  if (onlineCount > 0) renderAllPatterns();
 }
 
 // Update an existing device card in-place without destroying user inputs
@@ -162,6 +178,7 @@ function updateDeviceCard(card, dev) {
     if (brSlider && brVal) {
       brSlider.value = String(s.brightness);
       brVal.textContent = String(s.brightness);
+      updateSliderFill(brSlider);
     }
   }
 
@@ -269,12 +286,15 @@ function createDeviceCard(dev) {
   brSlider.oninput = () => {
     activeSlider = dev.id; // Also mark active during drag
     brVal.textContent = brSlider.value;
+    updateSliderFill(brSlider);
     clearTimeout(sliderTimeout);
     sliderTimeout = setTimeout(() => {
       setBrightnessVal(dev.id, parseInt(brSlider.value));
       activeSlider = null;
     }, 150);
   };
+  // Set initial fill
+  requestAnimationFrame(() => updateSliderFill(brSlider));
 
   const brVal = el('span', 'br-val');
   brVal.textContent = String(s.brightness);
@@ -444,17 +464,36 @@ function renderPatternGrid(deviceId, patterns, activeMode) {
 
 let allPatternsRendered = false;
 function renderAllPatterns() {
-  if (allPatternsRendered) return; // Static content, render once
+  if (allPatternsRendered) return;
   allPatternsRendered = true;
 
   const grid = document.getElementById('all-patterns');
   while (grid.firstChild) grid.removeChild(grid.firstChild);
 
-  const common = ['rainbow', 'candle', 'wave', 'sparkle', 'red', 'green', 'blue', 'white', 'off'];
-  common.forEach(id => {
+  // Compute common patterns from cached pattern lists of online devices
+  const onlineIds = devices.filter(d => d.online).map(d => d.id);
+  const patternSets = onlineIds.map(id => patternCache[id]).filter(Boolean);
+
+  let common;
+  if (patternSets.length > 0) {
+    // Find intersection of all pattern ID sets
+    const first = new Set(patternSets[0].map(p => p.id));
+    for (let i = 1; i < patternSets.length; i++) {
+      const ids = new Set(patternSets[i].map(p => p.id));
+      for (const id of first) { if (!ids.has(id)) first.delete(id); }
+    }
+    // Use first device's order, filter to common
+    common = patternSets[0].filter(p => first.has(p.id));
+  } else {
+    // Fallback: hardcoded common patterns
+    const fallback = ['rainbow', 'candle', 'wave', 'sparkle', 'wedge', 'red', 'green', 'blue', 'white', 'off'];
+    common = fallback.map(id => ({ id, name: id.charAt(0).toUpperCase() + id.slice(1) }));
+  }
+
+  common.forEach(pat => {
     const btn = el('button', 'pat-btn');
-    btn.textContent = id.charAt(0).toUpperCase() + id.slice(1);
-    btn.onclick = () => allPattern(id);
+    btn.textContent = pat.name;
+    btn.onclick = () => allPattern(pat.id);
     grid.appendChild(btn);
   });
 
@@ -478,6 +517,22 @@ function renderAllPatterns() {
 // ---- API Calls ----
 
 async function setPattern(deviceId, patternId) {
+  // Optimistic UI: immediately highlight the clicked pattern
+  const card = document.querySelector('[data-device-id="' + deviceId + '"]');
+  if (card) {
+    card.querySelectorAll('.pat-btn').forEach(btn => btn.classList.remove('active'));
+    const patterns = patternCache[deviceId] || [];
+    const idx = patterns.findIndex(p => p.id === patternId);
+    if (idx >= 0) {
+      const btns = card.querySelectorAll('.pat-btn');
+      if (btns[idx]) btns[idx].classList.add('active');
+    }
+    const mode = card.querySelector('.device-mode');
+    if (mode) {
+      const pat = patterns.find(p => p.id === patternId);
+      if (pat) mode.textContent = pat.name;
+    }
+  }
   try {
     await fetch('/api/devices/' + deviceId + '/pattern', {
       method: 'POST',
@@ -535,6 +590,7 @@ async function stopMorse(deviceId) {
 }
 
 async function restartDevice(deviceId, btn) {
+  if (!confirm('Restart ' + deviceId + '?')) return;
   if (btn) { btn.textContent = '...'; btn.disabled = true; }
   try {
     await fetch('/api/devices/' + deviceId + '/restart', { method: 'POST' });
@@ -547,37 +603,98 @@ async function restartDevice(deviceId, btn) {
 
 async function allPattern(patternId) {
   try {
-    await fetch('/api/devices/all/pattern', {
+    const res = await fetch('/api/devices/all/pattern', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: patternId })
     });
-  } catch (_) {}
+    if (!res.ok) showToast('Pattern sync failed', 'error');
+  } catch (_) { showToast('Pattern sync failed', 'error'); }
 }
 
 async function allBrightness(dir) {
-  for (const dev of devices) {
-    if (dev.online) setBrightness(dev.id, dir);
-  }
+  try {
+    const res = await fetch('/api/devices/all/brightness', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dir })
+    });
+    if (!res.ok) showToast('Brightness sync failed', 'error');
+  } catch (_) { showToast('Brightness sync failed', 'error'); }
 }
 
+let allBrSliderTimeout = null;
 function allBrightnessVal(value) {
-  for (const dev of devices) {
-    if (dev.online) setBrightnessVal(dev.id, parseInt(value));
-  }
+  clearTimeout(allBrSliderTimeout);
+  allBrSliderTimeout = setTimeout(async () => {
+    try {
+      const res = await fetch('/api/devices/all/brightness', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value: parseInt(value) })
+      });
+      if (!res.ok) showToast('Brightness sync failed', 'error');
+    } catch (_) { showToast('Brightness sync failed', 'error'); }
+  }, 150);
 }
 
 let allColorTimeout = null;
 function allColor(hex) {
   clearTimeout(allColorTimeout);
-  allColorTimeout = setTimeout(() => {
+  allColorTimeout = setTimeout(async () => {
     const r = parseInt(hex.substr(1, 2), 16);
     const g = parseInt(hex.substr(3, 2), 16);
     const b = parseInt(hex.substr(5, 2), 16);
-    for (const dev of devices) {
-      if (dev.online) sendColor(dev.id, r, g, b);
-    }
+    try {
+      const res = await fetch('/api/devices/all/color', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ r, g, b })
+      });
+      if (!res.ok) showToast('Color sync failed', 'error');
+    } catch (_) { showToast('Color sync failed', 'error'); }
   }, 80);
+}
+
+// Convert Kelvin color temperature to RGB (simplified Tanner Helland algorithm)
+function kelvinToRgb(kelvin) {
+  const temp = kelvin / 100;
+  let r, g, b;
+  if (temp <= 66) {
+    r = 255;
+    g = Math.min(255, Math.max(0, 99.4708 * Math.log(temp) - 161.1196));
+    b = temp <= 19 ? 0 : Math.min(255, Math.max(0, 138.5177 * Math.log(temp - 10) - 305.0448));
+  } else {
+    r = Math.min(255, Math.max(0, 329.6987 * Math.pow(temp - 60, -0.1332)));
+    g = Math.min(255, Math.max(0, 288.1221 * Math.pow(temp - 60, -0.0755)));
+    b = 255;
+  }
+  return { r: Math.round(r), g: Math.round(g), b: Math.round(b) };
+}
+
+let colorTempTimeout = null;
+function allColorTemp(kelvin) {
+  clearTimeout(colorTempTimeout);
+  colorTempTimeout = setTimeout(() => {
+    const { r, g, b } = kelvinToRgb(parseInt(kelvin));
+    const hex = '#' + [r, g, b].map(v => v.toString(16).padStart(2, '0')).join('');
+    document.getElementById('all-color').value = hex;
+    allColor(hex);
+  }, 80);
+}
+
+async function allRestart() {
+  const online = devices.filter(d => d.online);
+  if (online.length === 0) return;
+  if (!confirm('Restart all ' + online.length + ' device(s)?')) return;
+  try {
+    const res = await fetch('/api/devices/all/restart', { method: 'POST' });
+    if (res.ok) {
+      showToast('Restarting ' + online.length + ' device(s)...', 'success');
+    } else {
+      showToast('Restart failed', 'error');
+    }
+  } catch (_) { showToast('Restart failed', 'error'); }
 }
 
 // ---- Scenes ----
@@ -794,6 +911,12 @@ async function saveSchedule() {
   if (!scheduleTarget) return;
   const cronExpr = document.getElementById('schedule-cron-input').value.trim();
   const description = document.getElementById('schedule-desc-input').value.trim();
+
+  // Basic cron validation: must be 5 space-separated fields
+  if (cronExpr && cronExpr.split(' ').length !== 5) {
+    showToast('Cron must have 5 fields: min hour day month weekday', 'error');
+    return;
+  }
 
   if (!cronExpr) {
     // If empty, remove existing schedule

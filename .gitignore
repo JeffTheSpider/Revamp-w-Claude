@@ -3,12 +3,16 @@
 *.elf
 *.hex
 *.bin
-build/
+Clock/clock_v2/build/
+Lamp/lamp_v1/build/
 .pio/
 
 # IDE files
 .vscode/
 *.code-workspace
+*.swp
+*.swo
+*~
 
 # OS files
 Thumbs.db
@@ -18,6 +22,12 @@ desktop.ini
 # Node.js
 node_modules/
 package-lock.json
+
+# Runtime data
+Hub/scenes.json
+
+# Secrets
+.env
 
 # Claude internals
 .claude/

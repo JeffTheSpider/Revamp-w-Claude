@@ -7,17 +7,22 @@
 
 const EventEmitter = require('events');
 const http = require('http');
+const path = require('path');
+const fs = require('fs');
 
-// Known devices (static fallback if mDNS unavailable)
-const KNOWN_DEVICES = [
-  { id: 'mirror', name: "Charlie's Mirror", hostname: 'mirror.local', ip: '192.168.0.201' },
-  { id: 'lamp',   name: "Charlie's Lamp",   hostname: 'lamp.local',   ip: '192.168.0.202' }
-];
+// Load config (device list, polling settings)
+const CONFIG_PATH = path.join(__dirname, '..', '..', 'config.json');
+let config = { devices: [], polling: {} };
+try {
+  config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+} catch (e) {
+  console.error('[DeviceManager] Failed to load config.json, using defaults');
+}
 
-const POLL_INTERVAL = 10000; // 10s health check
-const REQUEST_TIMEOUT = 5000; // 5s HTTP timeout
-const MAX_BACKOFF = 60000;    // Max 60s between retries for offline devices
-const BASE_BACKOFF = 10000;   // Start at 10s
+const KNOWN_DEVICES = config.devices || [];
+const POLL_INTERVAL = (config.polling && config.polling.interval) || 10000;
+const REQUEST_TIMEOUT = (config.polling && config.polling.timeout) || 5000;
+const MAX_BACKOFF = (config.polling && config.polling.maxBackoff) || 60000;
 
 class DeviceManager extends EventEmitter {
   constructor() {
@@ -25,6 +30,7 @@ class DeviceManager extends EventEmitter {
     this.devices = new Map();
     this.pollTimer = null;
     this.failCounts = new Map(); // deviceId -> consecutive failure count
+    this._pollCounter = 0;       // Backoff cycle counter
 
     // Initialize known devices
     for (const dev of KNOWN_DEVICES) {
@@ -69,12 +75,11 @@ class DeviceManager extends EventEmitter {
       // After 1 fail: poll every 2nd cycle, after 2: every 4th, etc.
       if (fails > 0) {
         const backoffCycles = Math.min(Math.pow(2, fails - 1), MAX_BACKOFF / POLL_INTERVAL);
-        if (!this._pollCounter) this._pollCounter = 0;
         if (this._pollCounter % Math.ceil(backoffCycles) !== 0) continue;
       }
       this.pollDevice(id);
     }
-    this._pollCounter = (this._pollCounter || 0) + 1;
+    this._pollCounter++;
   }
 
   // Poll a single device
@@ -91,13 +96,15 @@ class DeviceManager extends EventEmitter {
         device.lastSeen = new Date().toISOString();
         device.status = data;
 
-        // Detect capabilities from status response
-        if (!device.capabilities) {
+        // Use explicit capabilities from firmware, fallback to detection
+        if (data.capabilities) {
+          device.capabilities = data.capabilities;
+        } else if (!device.capabilities) {
           device.capabilities = {
-            morse: !!(data.strips || data.ledCount), // Lamp-like devices
-            color: true,                              // All devices support color
-            ntp: data.ntpValid !== undefined,          // Clock has NTP
-            oled: !!data.oled                          // Clock has OLED
+            morse: !!(data.strips || data.ledCount),
+            color: true,
+            ntp: data.ntpValid !== undefined,
+            oled: !!data.oled
           };
         }
 
@@ -108,13 +115,16 @@ class DeviceManager extends EventEmitter {
         }
         this.emit('statusUpdate', id, device);
       })
-      .catch(() => {
+      .catch((err) => {
         const fails = (this.failCounts.get(id) || 0) + 1;
         this.failCounts.set(id, Math.min(fails, 6)); // Cap at 6 (64x backoff)
         if (device.online) {
           device.online = false;
           this.devices.set(id, device);
-          this.emit('deviceOffline', id);
+          // Include error type for diagnostics
+          const reason = err.code === 'ECONNREFUSED' ? 'refused'
+            : err.message === 'Timeout' ? 'timeout' : 'error';
+          this.emit('deviceOffline', id, reason);
         }
       });
   }
