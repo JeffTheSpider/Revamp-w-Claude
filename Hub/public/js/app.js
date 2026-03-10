@@ -1655,11 +1655,11 @@ async function sendOledMessage() {
   const line = document.getElementById('oled-line').value;
   if (!text) { showToast('Enter a message', 'error'); return; }
 
-  const clock = devices.find(d => d.id === 'clock' && d.online);
-  if (!clock) { showToast('Clock not online', 'error'); return; }
+  const oledDev = devices.find(d => d.online && d.capabilities && d.capabilities.includes('oled'));
+  if (!oledDev) { showToast('No OLED device online', 'error'); return; }
 
   try {
-    const res = await fetch('/api/devices/clock/command', {
+    const res = await fetch('/api/devices/' + oledDev.id + '/command', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ endpoint: '/api/oled', params: { text, line } })
@@ -1810,7 +1810,7 @@ function updateToolsVisibility() {
   // Show OLED tool only when clock is online with oled capability
   const oledTool = document.getElementById('oled-tool');
   if (oledTool) {
-    const clockOnline = devices.some(d => d.id === 'clock' && d.online &&
+    const clockOnline = devices.some(d => d.online &&
       d.capabilities && d.capabilities.includes('oled'));
     oledTool.style.display = clockOnline ? '' : 'none';
   }
