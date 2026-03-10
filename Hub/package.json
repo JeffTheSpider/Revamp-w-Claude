@@ -1,13 +1,17 @@
 {
   "name": "revamp-hub",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Central hub for Charlie's Mirror + Lamp LED control system",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js"
+    "dev": "node --watch server.js",
+    "test": "jest --forceExit --detectOpenHandles",
+    "test:watch": "jest --watch"
   },
   "dependencies": {
+    "cors": "^2.8.6",
+    "dotenv": "^17.3.1",
     "express": "^4.21.0",
     "fft.js": "^4.0.4",
     "node-cron": "^4.2.1",
@@ -15,5 +19,8 @@
   },
   "engines": {
     "node": ">=18.0.0"
+  },
+  "devDependencies": {
+    "jest": "^30.2.0"
   }
 }

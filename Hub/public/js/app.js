@@ -122,6 +122,15 @@ function handleMessage(msg) {
     case 'animation_playing':
       showToast('Playing: ' + (msg.data.name || 'Animation'), 'info');
       break;
+    case 'groups':
+      updateGroupsUI(msg.data);
+      break;
+    case 'group_saved':
+      showToast('Group "' + msg.name + '" saved', 'info');
+      break;
+    case 'group_deleted':
+      showToast('Group "' + msg.name + '" deleted', 'info');
+      break;
     case 'error':
       showToast(msg.message || 'An error occurred', 'error');
       break;
@@ -1187,6 +1196,8 @@ function updateAudioVisibility() {
     const hasAnim = devices.some(d => d.online && d.capabilities && d.capabilities.includes('animations'));
     animSection.style.display = hasAnim ? '' : 'none';
   }
+  // Show tools section
+  updateToolsVisibility();
 }
 
 // ---- Circadian / Ambient ----
@@ -1613,5 +1624,204 @@ function animDeleteSaved(name) {
     .catch(e => showToast('Delete error: ' + e.message, 'error'));
 }
 
+// ---- Timer ----
+
+async function startTimer() {
+  const minutes = parseInt(document.getElementById('timer-minutes').value) || 0;
+  const seconds = parseInt(document.getElementById('timer-seconds').value) || 0;
+  if (minutes === 0 && seconds === 0) { showToast('Set a time first', 'error'); return; }
+
+  const online = devices.filter(d => d.online);
+  if (online.length === 0) { showToast('No devices online', 'error'); return; }
+
+  let ok = 0;
+  for (const dev of online) {
+    try {
+      const res = await fetch('/api/devices/' + dev.id + '/command', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ endpoint: '/api/timer', params: { minutes, seconds } })
+      });
+      if (res.ok) ok++;
+    } catch (_) {}
+  }
+  showToast('Timer started on ' + ok + ' device(s): ' + minutes + 'm ' + seconds + 's', 'success');
+}
+
+// ---- OLED Message ----
+
+async function sendOledMessage() {
+  const text = document.getElementById('oled-text').value.trim();
+  const line = document.getElementById('oled-line').value;
+  if (!text) { showToast('Enter a message', 'error'); return; }
+
+  const clock = devices.find(d => d.id === 'clock' && d.online);
+  if (!clock) { showToast('Clock not online', 'error'); return; }
+
+  try {
+    const res = await fetch('/api/devices/clock/command', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ endpoint: '/api/oled', params: { text, line } })
+    });
+    if (res.ok) {
+      showToast('OLED message sent', 'success');
+      document.getElementById('oled-text').value = '';
+    }
+  } catch (_) { showToast('Failed to send OLED message', 'error'); }
+}
+
+// ---- Groups ----
+
+let groups = {};
+
+function updateGroupsUI(data) {
+  if (!data) return;
+  groups = data;
+  renderGroupChips();
+}
+
+function renderGroupChips() {
+  const container = document.getElementById('group-chips');
+  if (!container) return;
+  while (container.firstChild) container.removeChild(container.firstChild);
+
+  const names = Object.keys(groups);
+  if (names.length === 0) {
+    const empty = document.createElement('span');
+    empty.style.cssText = 'color:var(--text-dim); font-size:11px';
+    empty.textContent = 'No groups';
+    container.appendChild(empty);
+    return;
+  }
+
+  for (const name of names) {
+    const chip = document.createElement('span');
+    chip.className = 'group-chip';
+    chip.textContent = name + ' (' + groups[name].length + ')';
+
+    const remove = document.createElement('span');
+    remove.className = 'chip-remove';
+    remove.textContent = '\u2715';
+    remove.addEventListener('click', (e) => {
+      e.stopPropagation();
+      deleteGroup(name);
+    });
+
+    chip.appendChild(remove);
+    container.appendChild(chip);
+  }
+}
+
+async function createGroup() {
+  const nameInput = document.getElementById('group-name');
+  const name = nameInput.value.trim();
+  if (!name) { showToast('Enter a group name', 'error'); return; }
+
+  // Add all online devices to the group
+  const deviceIds = devices.filter(d => d.online).map(d => d.id);
+  if (deviceIds.length === 0) { showToast('No devices online', 'error'); return; }
+
+  try {
+    const res = await fetch('/api/groups', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, devices: deviceIds })
+    });
+    if (res.ok) {
+      showToast('Group "' + name + '" created', 'success');
+      nameInput.value = '';
+      const data = await res.json();
+      if (data.groups) updateGroupsUI(data.groups);
+    }
+  } catch (_) { showToast('Failed to create group', 'error'); }
+}
+
+async function deleteGroup(name) {
+  try {
+    const res = await fetch('/api/groups/' + encodeURIComponent(name), { method: 'DELETE' });
+    if (res.ok) {
+      showToast('Group "' + name + '" deleted', 'success');
+      const data = await res.json();
+      if (data.groups) updateGroupsUI(data.groups);
+    }
+  } catch (_) { showToast('Failed to delete group', 'error'); }
+}
+
+// ---- System / Backup ----
+
+let healthInterval = null;
+
+function fetchHealth() {
+  fetch('/api/health')
+    .then(r => r.json())
+    .then(data => {
+      const uptimeEl = document.getElementById('hub-uptime');
+      const memEl = document.getElementById('hub-memory');
+      if (uptimeEl) uptimeEl.textContent = formatUptime(Math.floor(data.uptime));
+      if (memEl) memEl.textContent = formatBytes(data.memory.heapUsed);
+    })
+    .catch(() => {});
+}
+
+function downloadBackup() {
+  window.open('/api/system/backup', '_blank');
+  showToast('Downloading backup...', 'info');
+}
+
+function restoreBackup(fileInput) {
+  const file = fileInput.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      const data = JSON.parse(e.target.result);
+      fetch('/api/system/restore', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      })
+      .then(r => r.json())
+      .then(result => {
+        if (result.ok) {
+          showToast('Config restored! Refresh to see changes.', 'success');
+        } else {
+          showToast(result.error || 'Restore failed', 'error');
+        }
+      })
+      .catch(() => showToast('Restore failed', 'error'));
+    } catch (_) {
+      showToast('Invalid backup file', 'error');
+    }
+    fileInput.value = '';
+  };
+  reader.readAsText(file);
+}
+
+// ---- Tools Section Visibility ----
+
+function updateToolsVisibility() {
+  const section = document.getElementById('tools-section');
+  if (section) {
+    const online = devices.some(d => d.online);
+    section.style.display = online ? '' : 'none';
+  }
+  // Show OLED tool only when clock is online with oled capability
+  const oledTool = document.getElementById('oled-tool');
+  if (oledTool) {
+    const clockOnline = devices.some(d => d.id === 'clock' && d.online &&
+      d.capabilities && d.capabilities.includes('oled'));
+    oledTool.style.display = clockOnline ? '' : 'none';
+  }
+}
+
 // ---- Start ----
 connect();
+// Fetch health periodically
+fetchHealth();
+healthInterval = setInterval(fetchHealth, 30000);
+// Fetch groups on load
+fetch('/api/groups').then(r => r.json()).then(data => {
+  if (data && typeof data === 'object') updateGroupsUI(data);
+}).catch(() => {});

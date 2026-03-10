@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  hub-test:
+    name: Hub Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: Hub/package-lock.json
+
+      - name: Install dependencies
+        working-directory: Hub
+        run: npm ci
+
+      - name: Run tests
+        working-directory: Hub
+        run: npm test
+
+  firmware-compile:
+    name: Firmware Compile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install arduino-cli
+        uses: arduino/setup-arduino-cli@v2
+
+      - name: Install ESP8266 board package
+        run: |
+          arduino-cli config init
+          arduino-cli config add board_manager.additional_urls https://arduino.esp8266.com/stable/package_esp8266com_index.json
+          arduino-cli core update-index
+          arduino-cli core install esp8266:esp8266
+
+      - name: Install libraries
+        run: |
+          arduino-cli lib install "NeoPixelBus by Makuna"
+          arduino-cli lib install "ESP8266 and ESP32 OLED driver for SSD1306 displays"
+          arduino-cli lib install "TelnetStream"
+          arduino-cli lib install "NTPClient"
+          arduino-cli lib install "Time"
+          arduino-cli lib install "Timezone"
+
+      - name: Compile Clock firmware
+        run: arduino-cli compile --fqbn esp8266:esp8266:nodemcuv2 Clock/clock_v2/
+
+      - name: Compile Lamp firmware
+        run: arduino-cli compile --fqbn esp8266:esp8266:nodemcuv2 Lamp/lamp_v1/

@@ -13,7 +13,7 @@
 // Safe mode skips NeoPixel init so USB recovery still works.
 // ============================================================
 
-#define FW_VERSION "2.9.0"
+#define FW_VERSION "2.10.0"
 
 #include <ESP8266WiFi.h>
 #include <ESP8266mDNS.h>
@@ -753,7 +753,7 @@ void handleApiStatus() {
     "\"bootCount\":%d,"
     "\"stable\":%s,"
     "\"notifying\":%s,"
-    "\"capabilities\":[\"color\",\"ntp\",\"oled\",\"patterns\",\"music\",\"ambient\",\"notify\",\"animations\"]}",
+    "\"capabilities\":[\"color\",\"ntp\",\"oled\",\"patterns\",\"music\",\"ambient\",\"notify\",\"animations\",\"timer\"]}",
     FW_VERSION,
     safeMode ? "true" : "false",
     uptime,
@@ -860,6 +860,52 @@ void handleApiColor() {
   uint8_t b = server.hasArg("b") ? (uint8_t)server.arg("b").toInt() : 0;
   setCustomColor(r, g, b);
   setMode(MODE_COLOR);
+  server.send(200, "application/json", "{\"ok\":true}");
+}
+
+// ============================================================
+// Web Server - Timer (GET /api/timer?minutes=5)
+// ============================================================
+void handleApiTimer() {
+  if (safeMode) {
+    server.send(200, "application/json", "{\"ok\":false,\"reason\":\"safe mode\"}");
+    return;
+  }
+  int minutes = server.hasArg("minutes") ? server.arg("minutes").toInt() : 0;
+  int seconds = server.hasArg("seconds") ? server.arg("seconds").toInt() : 0;
+  unsigned long totalMs = (unsigned long)(minutes * 60 + seconds) * 1000UL;
+  if (totalMs == 0) {
+    server.send(400, "application/json", "{\"error\":\"Specify minutes or seconds\"}");
+    return;
+  }
+  timerDurationMs = totalMs;
+  timerStartMs = millis();
+  setMode(MODE_TIMER);
+  char buf[64];
+  snprintf(buf, sizeof(buf), "{\"ok\":true,\"duration\":%lu}", totalMs / 1000);
+  server.send(200, "application/json", buf);
+}
+
+// ============================================================
+// Web Server - OLED Message (GET /api/oled?text=Hello&line=0)
+// ============================================================
+void handleApiOled() {
+  String text = server.hasArg("text") ? server.arg("text") : "";
+  int line = server.hasArg("line") ? server.arg("line").toInt() : 0;
+  if (text.length() == 0) {
+    server.send(400, "application/json", "{\"error\":\"Missing text\"}");
+    return;
+  }
+  // Display on OLED — uses the global display object
+  // Clear the target line area and draw text
+  int y = line * 16;
+  display.setColor(BLACK);
+  display.fillRect(0, y, 128, 16);
+  display.setColor(WHITE);
+  display.setTextAlignment(TEXT_ALIGN_CENTER);
+  display.setFont(ArialMT_Plain_16);
+  display.drawString(64, y, text);
+  display.display();
   server.send(200, "application/json", "{\"ok\":true}");
 }
 
@@ -1268,6 +1314,8 @@ void setup() {
   server.on("/api/notify", handleApiNotify);
   server.on("/api/animation", handleApiAnimation);
   server.on("/api/animation/keyframe", handleApiAnimKeyframe);
+  server.on("/api/timer", handleApiTimer);
+  server.on("/api/oled", handleApiOled);
   server.on("/restart", handleRestart);
   server.onNotFound(handleDashboard);
   server.begin();

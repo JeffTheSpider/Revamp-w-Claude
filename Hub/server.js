@@ -8,40 +8,68 @@
 // Dev:   npm run dev (auto-restart on changes)
 // ============================================================
 
+// Load .env before anything else
+try { require('dotenv').config(); } catch (_) {}
+
 const express = require('express');
 const http = require('http');
+const cors = require('cors');
 const { WebSocketServer } = require('ws');
 const path = require('path');
 const fs = require('fs');
+const FileLogger = require('./src/middleware/logger');
+const createAuthMiddleware = require('./src/middleware/auth');
 const DeviceManager = require('./src/services/device-manager');
 const SceneManager = require('./src/services/scene-manager');
 const AudioManager = require('./src/services/audio-manager');
 const CircadianManager = require('./src/services/circadian-manager');
 const NotificationManager = require('./src/services/notification-manager');
 const AnimationManager = require('./src/services/animation-manager');
+const GroupManager = require('./src/services/group-manager');
 const apiRoutes = require('./src/api/routes');
 const sceneRoutes = require('./src/api/scenes');
 const audioRoutes = require('./src/api/audio');
 const circadianRoutes = require('./src/api/circadian');
 const notificationRoutes = require('./src/api/notifications');
 const animationRoutes = require('./src/api/animations');
+const systemRoutes = require('./src/api/system');
+const groupRoutes = require('./src/api/groups');
 
-// Load config
+// ---- Config ----
+
+const CONFIG_PATH = path.join(__dirname, 'config.json');
 let hubConfig = {};
-try { hubConfig = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8')); } catch (_) {}
+try { hubConfig = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')); } catch (_) {}
 const PORT = process.env.PORT || hubConfig.port || 3000;
+
+// ---- File Logger ----
+
+const logger = new FileLogger(process.env.LOG_DIR || './logs');
+
+// ---- Express App ----
 
 const app = express();
 const server = http.createServer(app);
-
-// WebSocket server on same HTTP server
 const wss = new WebSocketServer({ server, path: '/ws' });
 
-// Middleware
+// ---- Middleware ----
+
+// CORS — allow same-origin and LAN access
+app.use(cors({
+  origin: true,
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Key']
+}));
+
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Basic rate limiting for API (100 requests per 10s per IP)
+// Auth middleware (optional, enabled if HUB_AUTH_TOKEN is set)
+const authToken = process.env.HUB_AUTH_TOKEN || '';
+app.use('/api', createAuthMiddleware(authToken));
+
+// Rate limiting (100 requests per 10s per IP)
 const rateLimitMap = new Map();
 app.use('/api', (req, res, next) => {
   const ip = req.ip;
@@ -65,7 +93,7 @@ setInterval(() => {
   }
 }, 30000);
 
-// Request logging (API calls only, skip static files)
+// Slow request logging
 app.use('/api', (req, res, next) => {
   const start = Date.now();
   res.on('finish', () => {
@@ -77,39 +105,34 @@ app.use('/api', (req, res, next) => {
   next();
 });
 
-// Device manager (discovers and polls ESP devices)
+// ---- Services ----
+
 const deviceManager = new DeviceManager();
-
-// Scene manager (save/load device state snapshots)
 const sceneManager = new SceneManager(deviceManager);
-
-// Audio manager (FFT + beat detection + UDP broadcast)
 const audioManager = new AudioManager();
-
-// Circadian manager (time-of-day color temperature + sunrise alarms)
 const circadianManager = new CircadianManager(deviceManager);
-
-// Notification manager (webhooks, profiles, weather)
 const notificationManager = new NotificationManager(deviceManager);
-
-// Animation manager (keyframe animations, upload, playback)
 const animationManager = new AnimationManager(deviceManager);
+const groupManager = new GroupManager(deviceManager);
 
-// Make managers available to routes
 app.set('deviceManager', deviceManager);
 app.set('sceneManager', sceneManager);
 app.set('audioManager', audioManager);
 app.set('circadianManager', circadianManager);
 app.set('notificationManager', notificationManager);
 app.set('animationManager', animationManager);
+app.set('groupManager', groupManager);
 
-// API routes
+// ---- API Routes ----
+
+app.use('/api', systemRoutes);
 app.use('/api', apiRoutes);
 app.use('/api/scenes', sceneRoutes);
 app.use('/api/audio', audioRoutes);
 app.use('/api/circadian', circadianRoutes);
 app.use('/api', notificationRoutes);
 app.use('/api', animationRoutes);
+app.use('/api/groups', groupRoutes);
 
 // Global API error handler
 app.use('/api', (err, req, res, _next) => {
@@ -117,22 +140,38 @@ app.use('/api', (err, req, res, _next) => {
   res.status(500).json({ error: 'Internal server error' });
 });
 
-// SPA fallback - serve index.html for all non-API routes
+// SPA fallback
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// WebSocket handling
+// ---- Config Hot-Reload ----
+
+let configReloadTimer = null;
+fs.watchFile(CONFIG_PATH, { interval: 5000 }, () => {
+  clearTimeout(configReloadTimer);
+  configReloadTimer = setTimeout(() => {
+    try {
+      JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+      console.log('[Hub] Config file changed (restart Hub to apply)');
+    } catch (e) {
+      console.error('[Hub] Config reload failed:', e.message);
+    }
+  }, 1000);
+});
+
+// ---- WebSocket ----
+
 wss.on('connection', (ws) => {
   console.log(`[WS] Client connected (total: ${wss.clients.size})`);
 
-  // Send current device states + service statuses on connect
-  const devices = deviceManager.getAll();
-  ws.send(JSON.stringify({ type: 'devices', data: devices }));
+  // Send current states on connect
+  ws.send(JSON.stringify({ type: 'devices', data: deviceManager.getAll() }));
   ws.send(JSON.stringify({ type: 'audio_status', data: audioManager.getStatus() }));
   ws.send(JSON.stringify({ type: 'circadian_status', data: circadianManager.getStatus() }));
   ws.send(JSON.stringify({ type: 'notification_status', data: notificationManager.getStatus() }));
   ws.send(JSON.stringify({ type: 'animation_status', data: animationManager.getStatus() }));
+  ws.send(JSON.stringify({ type: 'groups', data: groupManager.list() }));
 
   ws.on('message', (raw) => {
     try {
@@ -148,22 +187,20 @@ wss.on('connection', (ws) => {
   });
 });
 
-// Throttle map for color updates (deviceId -> lastSendTime)
+// Throttle map for color updates
 const colorThrottle = new Map();
-const COLOR_THROTTLE_MS = 50; // Max ~20 color updates/sec per device
+const COLOR_THROTTLE_MS = 50;
 
-// Handle incoming WebSocket messages from clients
 function handleWsMessage(ws, msg) {
   switch (msg.type) {
     case 'color_update':
-      // Real-time color update from PWA color picker (throttled)
       if (msg.device && msg.r !== undefined) {
         const now = Date.now();
         const lastSend = colorThrottle.get(msg.device) || 0;
         if (now - lastSend >= COLOR_THROTTLE_MS) {
           colorThrottle.set(msg.device, now);
           deviceManager.sendColor(msg.device, msg.r, msg.g, msg.b)
-            .catch(() => {}); // Swallow errors for real-time stream
+            .catch(() => {});
         }
       }
       break;
@@ -186,27 +223,15 @@ function handleWsMessage(ws, msg) {
       }
       break;
 
-    case 'audio_start':
-      audioManager.start();
-      break;
-
-    case 'audio_stop':
-      audioManager.stop();
-      break;
+    case 'audio_start': audioManager.start(); break;
+    case 'audio_stop': audioManager.stop(); break;
 
     case 'audio_sensitivity':
-      if (msg.value !== undefined) {
-        audioManager.setSensitivity(parseFloat(msg.value));
-      }
+      if (msg.value !== undefined) audioManager.setSensitivity(parseFloat(msg.value));
       break;
 
-    case 'circadian_start':
-      circadianManager.start();
-      break;
-
-    case 'circadian_stop':
-      circadianManager.stop();
-      break;
+    case 'circadian_start': circadianManager.start(); break;
+    case 'circadian_stop': circadianManager.stop(); break;
 
     case 'sunrise_alarm_set':
       if (msg.hour !== undefined && msg.minute !== undefined) {
@@ -228,9 +253,7 @@ function handleWsMessage(ws, msg) {
       break;
 
     case 'notification_send':
-      if (msg.config) {
-        notificationManager.notify(msg.config).catch(() => {});
-      }
+      if (msg.config) notificationManager.notify(msg.config).catch(() => {});
       break;
 
     case 'weather_notify':
@@ -251,12 +274,36 @@ function handleWsMessage(ws, msg) {
         .catch(() => {});
       break;
 
+    // Group commands via WebSocket
+    case 'group_pattern':
+      if (msg.group && msg.pattern) {
+        groupManager.executeOnGroup(msg.group, '/api/pattern', { id: msg.pattern })
+          .then(r => ws.send(JSON.stringify({ type: 'group_result', group: msg.group, results: r })))
+          .catch(e => ws.send(JSON.stringify({ type: 'error', message: e.message })));
+      }
+      break;
+
+    case 'group_brightness':
+      if (msg.group) {
+        const params = msg.value !== undefined ? { val: msg.value } : { dir: msg.dir || 'up' };
+        groupManager.executeOnGroup(msg.group, '/api/brightness', params).catch(() => {});
+      }
+      break;
+
     default:
       console.log('[WS] Unknown message type:', msg.type);
   }
 }
 
-// Broadcast device status updates to all WebSocket clients
+// ---- Event Broadcasting ----
+
+function broadcast(msg) {
+  const data = JSON.stringify(msg);
+  wss.clients.forEach((client) => {
+    if (client.readyState === 1) client.send(data);
+  });
+}
+
 deviceManager.on('statusUpdate', (deviceId, status) => {
   const msg = JSON.stringify({ type: 'device_status', id: deviceId, data: status });
   wss.clients.forEach((client) => {
@@ -274,19 +321,9 @@ deviceManager.on('deviceOffline', (deviceId) => {
   broadcast({ type: 'device_offline', id: deviceId });
 });
 
-function broadcast(msg) {
-  const data = JSON.stringify(msg);
-  wss.clients.forEach((client) => {
-    if (client.readyState === 1) client.send(data);
-  });
-}
-
-// Broadcast scheduled scene activations to all clients
 sceneManager.on('scheduledActivation', (name, results) => {
   broadcast({ type: 'scene_activated', name, results, scheduled: true });
 });
-
-// Broadcast scene list updates on save/delete
 sceneManager.on('sceneSaved', () => {
   broadcast({ type: 'scenes', data: sceneManager.list() });
 });
@@ -294,18 +331,15 @@ sceneManager.on('sceneDeleted', () => {
   broadcast({ type: 'scenes', data: sceneManager.list() });
 });
 
-// Broadcast audio spectrum data to PWA clients (~20Hz)
 audioManager.on('audioData', (data) => {
   const msg = JSON.stringify({ type: 'audio_data', ...data });
   wss.clients.forEach((client) => {
     if (client.readyState === 1) client.send(msg);
   });
 });
-
 audioManager.on('started', () => {
   broadcast({ type: 'audio_status', data: audioManager.getStatus() });
 });
-
 audioManager.on('stopped', (info) => {
   broadcast({ type: 'audio_status', data: audioManager.getStatus() });
   if (info.reason !== 'user') {
@@ -313,7 +347,6 @@ audioManager.on('stopped', (info) => {
   }
 });
 
-// Broadcast circadian events
 circadianManager.on('started', () => {
   broadcast({ type: 'circadian_status', data: circadianManager.getStatus() });
 });
@@ -330,7 +363,6 @@ circadianManager.on('alarmSet', () => {
   broadcast({ type: 'circadian_status', data: circadianManager.getStatus() });
 });
 
-// Broadcast notification events
 notificationManager.on('notificationSent', (entry) => {
   broadcast({ type: 'notification_sent', data: entry });
   broadcast({ type: 'notification_status', data: notificationManager.getStatus() });
@@ -339,7 +371,6 @@ notificationManager.on('weatherUpdate', (data) => {
   broadcast({ type: 'weather_update', data });
 });
 
-// Broadcast animation events
 animationManager.on('animationSaved', () => {
   broadcast({ type: 'animation_status', data: animationManager.getStatus() });
 });
@@ -349,31 +380,42 @@ animationManager.on('animationDeleted', () => {
 animationManager.on('animationPlaying', (info) => {
   broadcast({ type: 'animation_playing', data: info });
 });
-animationManager.on('animationStopped', (info) => {
+animationManager.on('animationStopped', () => {
   broadcast({ type: 'animation_status', data: animationManager.getStatus() });
 });
 
-// Graceful shutdown: stop cron jobs, polling, and audio
+groupManager.on('groupSaved', () => {
+  broadcast({ type: 'groups', data: groupManager.list() });
+});
+groupManager.on('groupDeleted', () => {
+  broadcast({ type: 'groups', data: groupManager.list() });
+});
+
+// ---- Graceful Shutdown ----
+
 function shutdown() {
   console.log('[Hub] Shutting down...');
+  fs.unwatchFile(CONFIG_PATH);
   audioManager.stop();
   circadianManager.stop();
   notificationManager.stop();
   sceneManager.stopAll();
   deviceManager.stop();
+  logger.close();
   server.close();
 }
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
 
-// Prevent crashes from unhandled promise rejections
 process.on('unhandledRejection', (reason) => {
   console.error('[Hub] Unhandled rejection:', reason);
 });
 
-// Start server
+// ---- Start ----
+
 server.listen(PORT, () => {
   console.log(`[Hub] Server running on http://localhost:${PORT}`);
   console.log(`[Hub] WebSocket on ws://localhost:${PORT}/ws`);
+  if (authToken) console.log('[Hub] Auth enabled (Bearer token required)');
   deviceManager.start();
 });

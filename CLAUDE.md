@@ -6,44 +6,53 @@ Three subsystems: Clock (ESP8266), Lamp (ESP8266), and Hub (Node.js) forming a u
 
 ## Projects
 
-### Clock ("Charlie's Mirror") - FIRMWARE v2.9.0
+### Clock ("Charlie's Mirror") - FIRMWARE v2.10.0
 - **Hardware**: ESP8266 (NodeMCU LoLin v2), 60x WS2812B NeoPixel ring, SSD1306 1.3" OLED
-- **Firmware**: `Clock/clock_v2/` - OTA, safe mode, watchdog, telnet, NTP, 24 LED patterns (music + ambient + custom), notification overlay, animation engine, web dashboard
+- **Firmware**: `Clock/clock_v2/` - OTA, safe mode, watchdog, telnet, NTP, 25 LED patterns (music + ambient + custom + timer), notification overlay, animation engine, web dashboard
 - **Wiring**: ALL SOLDERED - GPIO0=OLED SDA, GPIO2=OLED SCL, GPIO3=NeoPixel DMA
 - **Network**: Static IP 192.168.0.201, mDNS mirror.local, SoftAP fallback
 - **LEDs**: All 60 active (previously 0, 55-59 were wrongly masked as dead)
-- **Capabilities**: color, ntp, oled, patterns, music, ambient, notify, animations (reported in /api/status)
+- **Capabilities**: color, ntp, oled, patterns, music, ambient, notify, animations, timer (reported in /api/status)
 - **Notify**: `/api/notify` overlay (flash/pulse/strobe), auto-revert, priority system
 - **Animations**: `/api/animation` + `/api/animation/keyframe` — keyframe interpolation engine, 12 max keyframes
+- **Timer**: `/api/timer?minutes=N&seconds=N` — countdown LED pattern (green->yellow->red), auto-revert
+- **OLED API**: `/api/oled?text=MSG&line=N` — display custom text on OLED (lines 0-2)
 - **Music**: UDP listener on port 4210, 3 patterns (Beat Pulse, Spectrum Ring, Beat Chase)
 - **Ambient**: 5 patterns (Daylight NTP-driven, Sunrise 30min ramp, Fireplace, Ocean, Forest)
 - **Libraries**: NeoPixelBus (DMA), ESP8266 SSD1306 (ThingPulse), TelnetStream, NTPClient, TimeLib, Timezone
 - **Original code**: `Clock/Original Code/clock_original.ino` (reference only)
 
-### Lamp ("Charlie's Lamp") - FIRMWARE v1.5.0
+### Lamp ("Charlie's Lamp") - FIRMWARE v1.6.0
 - **Hardware**: ESP8266EX (NodeMCU), 24x WS2812B (4 strips x 6 LEDs), embedded under resin
-- **Firmware**: `Lamp/lamp_v1/` - OTA, safe mode, watchdog, telnet, 23 LED patterns (music + ambient + custom), notification overlay, animation engine, morse code, web dashboard
+- **Firmware**: `Lamp/lamp_v1/` - OTA, safe mode, watchdog, telnet, 24 LED patterns (music + ambient + custom + timer), notification overlay, animation engine, morse code, web dashboard
 - **Wiring**: 4 strips on separate GPIOs: GPIO2=strip1(top), GPIO4=strip2, GPIO5=strip3, GPIO0=strip4(bottom)
 - **Network**: Static IP 192.168.0.202, mDNS lamp.local, SoftAP fallback
-- **Capabilities**: color, morse, patterns, music, ambient, notify, animations (reported in /api/status)
+- **Capabilities**: color, morse, patterns, music, ambient, notify, animations, timer (reported in /api/status)
 - **Notify**: `/api/notify` overlay (flash/pulse/strobe), auto-revert, priority system
 - **Animations**: `/api/animation` + `/api/animation/keyframe` — keyframe interpolation engine, 28 max keyframes
+- **Timer**: `/api/timer?minutes=N&seconds=N` — countdown LED pattern (green->yellow->red), auto-revert
 - **Music**: UDP listener on port 4210, 3 patterns (Beat Glow, Strip Spectrum, Color Pulse)
 - **Ambient**: 5 patterns (Daylight Hub-driven via /api/kelvin, Sunrise, Fireplace, Ocean, Forest)
 - **Libraries**: NeoPixelBus (BitBang, DMA broken on this chip), TelnetStream
 - **Serial**: Available (LEDs not on GPIO3/RX). Telnet also available.
 - **Morse**: `morse.h` - non-blocking state machine, ITU timing, A-Z/0-9, adjustable WPM
 
-### Hub - COMPLETE (All 10 phases done)
+### Hub - COMPLETE (All 10 phases + enhancements)
 - **Stack**: Node.js + Express + WebSocket
 - **Location**: `Hub/`
-- **Config**: `Hub/config.json` - device list, polling intervals, port
-- **Features**: Device discovery, REST proxy, PWA (Catppuccin Mocha), scenes + scheduling, morse code UI, color temperature, rate limiting, music reactive, ambient/circadian, notifications/webhooks, animation designer
+- **Version**: 0.2.0
+- **Config**: `Hub/config.json` - device list, polling intervals, port; `.env` for secrets
+- **Features**: Device discovery, REST proxy, PWA (Catppuccin Mocha), scenes + scheduling, morse code UI, color temperature, rate limiting, music reactive, ambient/circadian, notifications/webhooks, animation designer, device groups, system health, backup/restore, timer control, OLED messaging
+- **Middleware**: CORS, optional Bearer token auth (`HUB_AUTH_TOKEN`), file-based logging with rotation
 - **Audio**: `Hub/src/services/audio-manager.js` - FFmpeg capture, FFT, beat detection, UDP broadcast
 - **Circadian**: `Hub/src/services/circadian-manager.js` - time-of-day Kelvin, sunrise alarm scheduling
 - **Notifications**: `Hub/src/services/notification-manager.js` - webhook endpoint, profiles, weather integration
 - **Animations**: `Hub/src/services/animation-manager.js` - keyframe storage, device upload, playback control
-- **Service Worker**: Network-first strategy (v13), bump version when changing JS/HTML
+- **Groups**: `Hub/src/services/group-manager.js` - named device groups, batch operations
+- **System**: `Hub/src/api/system.js` - health endpoint, backup/restore, OTA trigger, firmware info
+- **Service Worker**: Network-first strategy (v14), bump version when changing JS/HTML/CSS
+- **CSS**: External `Hub/public/css/styles.css` (extracted from inline)
+- **Testing**: Jest (`npm test`)
 - **Run**: `cd Hub && npm start` (port 3000)
 
 ## Development Environment
@@ -77,31 +86,41 @@ Three subsystems: Clock (ESP8266), Lamp (ESP8266), and Hub (Node.js) forming a u
 ### Project Structure
 ```
 Clock/clock_v2/          # Active firmware
-  clock_v2.ino           # Main (~1050 lines)
+  clock_v2.ino           # Main (~1080 lines)
   config.h               # Pin defs, constants, EEPROM layout
   ntp_time.h             # NTP sync, UK timezone
-  led_patterns.h         # 22 LED patterns (14 + 3 music + 5 ambient)
+  led_patterns.h         # 23 LED patterns (14 + 3 music + 5 ambient + 1 timer)
+  notify.h               # Notification overlay (flash/pulse/strobe)
   build/                 # Compiled binary
 
 Lamp/lamp_v1/            # Active firmware
-  lamp_v1.ino            # Main (~780 lines)
+  lamp_v1.ino            # Main (~810 lines)
   config.h               # Pin defs, constants, EEPROM layout
-  led_patterns.h         # 21 LED patterns (13 + 3 music + 5 ambient)
+  led_patterns.h         # 22 LED patterns (13 + 3 music + 5 ambient + 1 timer)
   morse.h                # Morse code encoder (non-blocking)
+  notify.h               # Notification overlay (flash/pulse/strobe)
   build/                 # Compiled binary
 
 Hub/                     # Central control server
-  server.js              # Express + WebSocket + rate limiting + audio events
+  server.js              # Express + WebSocket + CORS + auth + logging
   config.json            # Device IPs, polling, port settings
-  src/services/          # Device manager, scene manager, audio manager, circadian manager
-  src/api/               # REST routes (devices, scenes, audio, circadian) + device ID validation
-  public/                # PWA frontend (Catppuccin Mocha glassmorphism + spectrum viz)
+  .env.example           # Environment variable template
+  ecosystem.config.js    # PM2 auto-restart config
+  src/services/          # Device, scene, audio, circadian, notification, animation, group managers
+  src/api/               # REST routes (devices, scenes, audio, circadian, notifications, animations, system, groups)
+  src/middleware/         # Auth (Bearer token), logger (file-based with rotation)
+  public/                # PWA frontend
+    css/styles.css        # Extracted CSS (Catppuccin Mocha + glassmorphism)
+    js/app.js             # Client-side JS (safe DOM, WebSocket)
+    sw.js                 # Service worker (network-first, v14)
+  tests/                 # Jest unit tests
 
 scripts/                 # Build & OTA helper scripts
 
 Shared/
   api-schema.json        # REST API contract
   pattern-defs.json      # Pattern metadata + palettes
+  docs/                  # Architecture docs, project documentation
 
 Clock/Original Code/     # Reference only
 ```

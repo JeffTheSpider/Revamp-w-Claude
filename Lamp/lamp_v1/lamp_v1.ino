@@ -15,7 +15,7 @@
 // Safe mode skips NeoPixel init so USB recovery still works.
 // ============================================================
 
-#define FW_VERSION "1.5.0"
+#define FW_VERSION "1.6.0"
 
 #include <ESP8266WiFi.h>
 #include <ESP8266mDNS.h>
@@ -711,7 +711,7 @@ void handleApiStatus() {
     "\"bootCount\":%d,"
     "\"stable\":%s,"
     "\"notifying\":%s,"
-    "\"capabilities\":[\"color\",\"morse\",\"patterns\",\"music\",\"ambient\",\"notify\",\"animations\"]}",
+    "\"capabilities\":[\"color\",\"morse\",\"patterns\",\"music\",\"ambient\",\"notify\",\"animations\",\"timer\"]}",
     FW_VERSION,
     safeMode ? "true" : "false",
     uptime,
@@ -838,6 +838,29 @@ void handleApiKelvin() {
   char json[48];
   snprintf(json, sizeof(json), "{\"ok\":true,\"kelvin\":%d}", val);
   server.send(200, "application/json", json);
+}
+
+// ============================================================
+// Web Server - Timer (GET /api/timer?minutes=5)
+// ============================================================
+void handleApiTimer() {
+  if (safeMode) {
+    server.send(200, "application/json", "{\"ok\":false,\"reason\":\"safe mode\"}");
+    return;
+  }
+  int minutes = server.hasArg("minutes") ? server.arg("minutes").toInt() : 0;
+  int seconds = server.hasArg("seconds") ? server.arg("seconds").toInt() : 0;
+  unsigned long totalMs = (unsigned long)(minutes * 60 + seconds) * 1000UL;
+  if (totalMs == 0) {
+    server.send(400, "application/json", "{\"error\":\"Specify minutes or seconds\"}");
+    return;
+  }
+  timerDurationMs = totalMs;
+  timerStartMs = millis();
+  setMode(MODE_TIMER);
+  char buf[64];
+  snprintf(buf, sizeof(buf), "{\"ok\":true,\"duration\":%lu}", totalMs / 1000);
+  server.send(200, "application/json", buf);
 }
 
 // ============================================================
@@ -1250,6 +1273,7 @@ void setup() {
   server.on("/api/notify", handleApiNotify);
   server.on("/api/animation", handleApiAnimation);
   server.on("/api/animation/keyframe", handleApiAnimKeyframe);
+  server.on("/api/timer", handleApiTimer);
   server.onNotFound(handleDashboard);
   server.begin();
   logInfo("Web server started on port 80");

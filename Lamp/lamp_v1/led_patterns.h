@@ -71,6 +71,7 @@ enum LedMode : uint8_t {
   MODE_FOREST,     // Ambient: green with golden sunbeams
   MODE_OFF,
   MODE_CUSTOM,     // Custom animation (uploaded from Hub)
+  MODE_TIMER,      // Timer/countdown (set via API)
   MODE_COUNT
 };
 
@@ -80,7 +81,7 @@ const char* const MODE_IDS[] = {
   "rainbow", "candle", "wave", "sparkle",
   "wedge", "pulse", "strips", "color",
   "beat_glow", "strip_spectrum", "color_pulse",
-  "daylight", "sunrise", "fireplace", "ocean", "forest", "off", "custom"
+  "daylight", "sunrise", "fireplace", "ocean", "forest", "off", "custom", "timer"
 };
 
 // Human-readable labels (for UI)
@@ -89,7 +90,7 @@ const char* const MODE_LABELS[] = {
   "Rainbow", "Candle", "Color Wave", "Sparkle",
   "Wedge", "Pulse", "Strip Colors", "Custom",
   "Beat Glow", "Strip Spectrum", "Color Pulse",
-  "Daylight", "Sunrise", "Fireplace", "Ocean", "Forest", "Off", "Custom Anim"
+  "Daylight", "Sunrise", "Fireplace", "Ocean", "Forest", "Off", "Custom Anim", "Timer"
 };
 
 LedMode currentMode = MODE_CANDLE;  // Default: cozy candle for a lamp
@@ -121,6 +122,8 @@ void setMode(LedMode mode) {
 unsigned long lastPat = 0;       // Throttle timer
 uint16_t patStep = 0;            // Animation frame counter
 uint8_t customR = 255, customG = 100, customB = 50;  // Custom color
+unsigned long timerDurationMs = 0;   // Timer countdown total (ms)
+unsigned long timerStartMs = 0;      // Timer start timestamp
 
 // Wedge pattern state
 uint8_t wedgeOrder[PIXEL_COUNT];   // Shuffled pixel indices
@@ -685,6 +688,50 @@ void patForest(int br) {
 }
 
 // ============================================================
+// Timer/Countdown Pattern
+// ============================================================
+void patTimer(int br) {
+  unsigned long now = millis();
+  if (now - lastPat < 50) return;
+  lastPat = now;
+
+  unsigned long elapsed = now - timerStartMs;
+  if (timerDurationMs == 0 || elapsed >= timerDurationMs) {
+    if (elapsed < timerDurationMs + 3000) {
+      bool flash = ((elapsed / 250) % 2) == 0;
+      RgbColor c = flash ? RgbColor(br, 0, 0) : RgbColor(0, 0, 0);
+      for (int i = 0; i < PIXEL_COUNT; i++) strip.SetPixelColor(i, c);
+    } else {
+      setMode(MODE_CANDLE);
+      return;
+    }
+    showStrip();
+    return;
+  }
+
+  float progress = (float)elapsed / (float)timerDurationMs;
+  float remaining = 1.0f - progress;
+  int litPixels = (int)(remaining * PIXEL_COUNT + 0.5f);
+
+  for (int i = 0; i < PIXEL_COUNT; i++) {
+    if (i < litPixels) {
+      uint8_t r, g;
+      if (remaining > 0.5f) {
+        r = (uint8_t)((1.0f - (remaining - 0.5f) * 2.0f) * br);
+        g = (uint8_t)(br * 0.8f);
+      } else {
+        r = (uint8_t)(br * 0.8f);
+        g = (uint8_t)(remaining * 2.0f * br * 0.8f);
+      }
+      strip.SetPixelColor(i, RgbColor(r, g, 0));
+    } else {
+      strip.SetPixelColor(i, RgbColor(0, 0, 0));
+    }
+  }
+  showStrip();
+}
+
+// ============================================================
 // Pattern Tick (call from loop)
 // ============================================================
 // Routes to the active pattern. Resets state on mode changes.
@@ -725,6 +772,7 @@ void tickPatterns(int br) {
     case MODE_FOREST:     patForest(br); break;
     case MODE_OFF:      break;
     case MODE_CUSTOM:     animTick(br); break;
+    case MODE_TIMER:      patTimer(br); break;
     case MODE_COUNT:    break;  // Sentinel
   }
 

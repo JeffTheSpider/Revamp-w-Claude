@@ -27,6 +27,9 @@ package-lock.json
 Hub/scenes.json
 Hub/animations.json
 Hub/notifications.json
+Hub/groups.json
+Hub/logs/
+Hub/.env
 
 # Build output (all devices)
 Clock/build/

@@ -1,0 +1,10 @@
+node_modules
+.env
+logs
+tests
+*.md
+
+# Runtime data files (generated at startup)
+scenes.json
+animations.json
+notifications.json
