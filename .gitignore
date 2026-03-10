@@ -25,6 +25,14 @@ package-lock.json
 
 # Runtime data
 Hub/scenes.json
+Hub/animations.json
+Hub/notifications.json
+
+# Build output (all devices)
+Clock/build/
+Lamp/build/
+Lamp/pin_scanner/build/
+Lamp/docs/
 
 # Secrets
 .env
